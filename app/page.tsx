@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
+import { StudentHome } from "@/components/student/StudentHome";
 
 export default async function Home() {
   const cookieStore = await cookies();
@@ -9,9 +10,12 @@ export default async function Home() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: isAdmin } = user
-    ? await supabase.rpc("is_admin", { _user_id: user.id })
-    : { data: false };
+  const [{ data: isAdmin }, { data: isProfesor }] = user
+    ? await Promise.all([
+        supabase.rpc("is_admin", { _user_id: user.id }),
+        supabase.rpc("is_profesor", { _user_id: user.id }),
+      ])
+    : [{ data: false }, { data: false }];
 
   const displayName =
     user?.user_metadata?.full_name ||
@@ -20,6 +24,11 @@ export default async function Home() {
     user?.email?.split("@")[0];
 
   const isAuthenticated = Boolean(user);
+  const isStudent = isAuthenticated && !isAdmin && !isProfesor;
+
+  if (isStudent) {
+    return <StudentHome />;
+  }
 
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-12">
@@ -49,6 +58,13 @@ export default async function Home() {
                   className="inline-flex items-center justify-center bg-muted/30 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
                 >
                   Admin roluri
+                </Link>
+              ) : isProfesor ? (
+                <Link
+                  href="/profesor/cursuri"
+                  className="inline-flex items-center justify-center bg-muted/30 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
+                >
+                  Profesor cursuri
                 </Link>
               ) : (
                 <Link

@@ -325,6 +325,7 @@ create table if not exists public.courses (
   teacher_id uuid not null references public.app_users(id) on delete restrict,
   title text not null,
   description text,
+  enrollment_open boolean not null default true,
   max_students integer not null check (max_students > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -342,12 +343,29 @@ create table if not exists public.course_resource_requirements (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
   resource_type public.digital_resource_type not null,
+  -- New model: resources required per student (used to derive total needed for the course).
+  -- Backward compatibility: keep required_amount for older deployments.
+  required_per_student integer not null default 0 check (required_per_student >= 0),
   required_amount integer not null check (required_amount >= 0),
   created_at timestamptz not null default now(),
   unique (course_id, resource_type)
 );
 
 create index if not exists course_requirements_course_idx on public.course_resource_requirements(course_id);
+
+-- Migration helper for existing DBs (idempotent)
+alter table public.course_resource_requirements
+  add column if not exists required_per_student integer not null default 0;
+
+-- Students enrolled to courses
+create table if not exists public.course_enrollments (
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  enrolled_at timestamptz not null default now(),
+  primary key (course_id, student_id)
+);
+
+create index if not exists course_enrollments_student_idx on public.course_enrollments(student_id);
 
 -- Resources allocated by admin to a course.
 -- professor_bonus_amount is always 10% of required_amount (rounded up) at allocation time.
@@ -364,6 +382,48 @@ create table if not exists public.course_resource_allocations (
 );
 
 create index if not exists course_allocations_course_idx on public.course_resource_allocations(course_id);
+
+-- Student RPC: enroll in a course if enrollment is open and capacity allows
+create or replace function public.enroll_in_course(_course_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_max integer;
+  c_open boolean;
+  enrolled_count integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  select max_students, enrollment_open into c_max, c_open
+  from public.courses
+  where id = _course_id;
+
+  if c_max is null then
+    raise exception 'Curs inexistent.';
+  end if;
+
+  if c_open is not true then
+    raise exception 'Inscrierea nu este deschisa pentru acest curs.';
+  end if;
+
+  select count(*) into enrolled_count
+  from public.course_enrollments
+  where course_id = _course_id;
+
+  if enrolled_count >= c_max then
+    raise exception 'Cursul este plin.';
+  end if;
+
+  insert into public.course_enrollments (course_id, student_id)
+  values (_course_id, auth.uid())
+  on conflict (course_id, student_id) do nothing;
+end;
+$$;
 
 -- Admin RPC: allocate resources for course + auto-grant 10% bonus to professor pool
 create or replace function public.allocate_course_resources(
@@ -384,10 +444,14 @@ begin
     raise exception 'Doar admin poate aloca resurse.';
   end if;
 
-  select required_amount into req
-  from public.course_resource_requirements
-  where course_id = _course_id
-    and resource_type = _resource_type;
+  -- Total needed is derived from per-student requirement * max_students.
+  -- If older column is used, fall back to required_amount.
+  select
+    coalesce((r.required_per_student * c.max_students), r.required_amount) into req
+  from public.course_resource_requirements r
+  join public.courses c on c.id = r.course_id
+  where r.course_id = _course_id
+    and r.resource_type = _resource_type;
 
   if req is null then
     raise exception 'Nu exista cerinta de resurse pentru acest tip.';
@@ -433,25 +497,38 @@ $$;
 
 alter table public.courses enable row level security;
 alter table public.course_resource_requirements enable row level security;
+alter table public.course_enrollments enable row level security;
 alter table public.course_resource_allocations enable row level security;
 
 revoke all on public.courses from anon, authenticated;
 revoke all on public.course_resource_requirements from anon, authenticated;
+revoke all on public.course_enrollments from anon, authenticated;
 revoke all on public.course_resource_allocations from anon, authenticated;
 
 grant select, insert, update, delete on public.courses to authenticated;
 grant select, insert, update, delete on public.course_resource_requirements to authenticated;
+grant select on public.course_enrollments to authenticated;
 grant select on public.course_resource_allocations to authenticated;
 
--- courses: teachers manage own, admin manages all
+revoke all on function public.enroll_in_course(bigint) from public;
+grant execute on function public.enroll_in_course(bigint) to authenticated;
+
+-- courses: visible to students (open enrollments + enrolled), teacher own, admin all
 drop policy if exists "courses_select_teacher_or_admin" on public.courses;
-create policy "courses_select_teacher_or_admin"
+drop policy if exists "courses_select_visible_to_users" on public.courses;
+create policy "courses_select_visible_to_users"
 on public.courses
 for select
 to authenticated
 using (
-  teacher_id = auth.uid()
-  or public.is_admin(auth.uid())
+  public.is_admin(auth.uid())
+  or teacher_id = auth.uid()
+  or enrollment_open = true
+  or exists (
+    select 1 from public.course_enrollments e
+    where e.course_id = id
+      and e.student_id = auth.uid()
+  )
 );
 
 drop policy if exists "courses_insert_teacher_or_admin" on public.courses;
@@ -559,5 +636,21 @@ using (
     select 1 from public.courses c
     where c.id = course_id
       and (c.teacher_id = auth.uid() or public.is_admin(auth.uid()))
+  )
+);
+
+-- enrollments: student sees own; teacher/admin sees enrollments for their courses
+drop policy if exists "course_enrollments_select_visible" on public.course_enrollments;
+create policy "course_enrollments_select_visible"
+on public.course_enrollments
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
   )
 );

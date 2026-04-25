@@ -20,20 +20,23 @@ type Requirement = {
   id: number;
   course_id: number;
   resource_type: "tokens" | "vps_subscription";
-  required_amount: number;
+  required_per_student: number | null;
+  required_amount?: number | null;
 };
 
 type RequirementDraft = {
   resource_type: Requirement["resource_type"];
-  required_amount: number;
+  required_per_student: string;
 };
 
 function formatResourceLabel(t: RequirementDraft["resource_type"]) {
   return t === "tokens" ? "Token-uri AI" : "Abonamente VPS";
 }
 
-function formatRequirementShort(r: { resource_type: RequirementDraft["resource_type"]; required_amount: number }) {
-  return r.resource_type === "tokens" ? `${r.required_amount} tokens` : `${r.required_amount} VPS`;
+function formatRequirementShort(r: { resource_type: RequirementDraft["resource_type"]; required_per_student: number }, maxStudents: number) {
+  const perStudent = Number(r.required_per_student) || 0;
+  const total = Math.max(0, perStudent * (Number(maxStudents) || 0));
+  return `${perStudent}/student (${total} total)`;
 }
 
 function ceil10Percent(n: number) {
@@ -45,10 +48,10 @@ export default function ProfesorCursuriPage() {
   const supabase = useMemo(() => createClient(), []);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [maxStudents, setMaxStudents] = useState<number>(30);
+  const [maxStudents, setMaxStudents] = useState<string>("30");
   const [requirements, setRequirements] = useState<RequirementDraft[]>([
-    { resource_type: "tokens", required_amount: 0 },
-    { resource_type: "vps_subscription", required_amount: 0 },
+    { resource_type: "tokens", required_per_student: "" },
+    { resource_type: "vps_subscription", required_per_student: "" },
   ]);
 
   const profesorCheckQuery = useQuery({
@@ -83,7 +86,7 @@ export default function ProfesorCursuriPage() {
       const { data: reqs, error: reqsError } = courseIds.length
         ? await supabase
             .from("course_resource_requirements")
-            .select("id,course_id,resource_type,required_amount")
+            .select("id,course_id,resource_type,required_per_student,required_amount")
             .in("course_id", courseIds)
         : { data: [] as Requirement[], error: null };
       if (reqsError) throw reqsError;
@@ -101,11 +104,12 @@ export default function ProfesorCursuriPage() {
     mutationFn: async () => {
       const trimmedTitle = title.trim();
       if (!trimmedTitle) throw new Error("Titlul cursului este obligatoriu.");
-      if (!Number.isFinite(maxStudents) || maxStudents <= 0) throw new Error("Numarul maxim de studenti trebuie sa fie > 0.");
+      const maxStudentsNum = Number(maxStudents);
+      if (!Number.isFinite(maxStudentsNum) || maxStudentsNum <= 0) throw new Error("Numarul maxim de studenti trebuie sa fie > 0.");
 
       const normalized = requirements
-        .map((r) => ({ ...r, required_amount: Number(r.required_amount) }))
-        .filter((r) => Number.isFinite(r.required_amount) && r.required_amount >= 0);
+        .map((r) => ({ ...r, required_per_student: Number(r.required_per_student) }))
+        .filter((r) => Number.isFinite(r.required_per_student) && r.required_per_student >= 0);
 
       const hasDuplicateTypes = new Set(normalized.map((r) => r.resource_type)).size !== normalized.length;
       if (hasDuplicateTypes) throw new Error("Nu poti adauga acelasi tip de resursa de doua ori.");
@@ -116,7 +120,7 @@ export default function ProfesorCursuriPage() {
           teacher_id: profesorCheckQuery.data?.userId,
           title: trimmedTitle,
           description: description.trim() ? description.trim() : null,
-          max_students: maxStudents,
+          max_students: maxStudentsNum,
         })
         .select("id")
         .single();
@@ -127,7 +131,8 @@ export default function ProfesorCursuriPage() {
       const rows = normalized.map((r) => ({
         course_id: courseId,
         resource_type: r.resource_type,
-        required_amount: r.required_amount,
+        required_per_student: r.required_per_student,
+        required_amount: 0,
       }));
 
       if (rows.length) {
@@ -139,10 +144,10 @@ export default function ProfesorCursuriPage() {
       toast.success("Curs creat.");
       setTitle("");
       setDescription("");
-      setMaxStudents(30);
+      setMaxStudents("30");
       setRequirements([
-        { resource_type: "tokens", required_amount: 0 },
-        { resource_type: "vps_subscription", required_amount: 0 },
+        { resource_type: "tokens", required_per_student: "" },
+        { resource_type: "vps_subscription", required_per_student: "" },
       ]);
       void coursesQuery.refetch();
     },
@@ -202,8 +207,7 @@ export default function ProfesorCursuriPage() {
         <div className="flex flex-col gap-1">
           <h2 className="font-mono text-sm font-semibold text-foreground">Creeaza curs</h2>
           <p className="text-xs text-muted-foreground">
-            Defineste necesarul de resurse. La alocare, administratorul adauga automat un bonus de <span className="font-semibold text-foreground">10%</span> pentru profesor (pool pentru
-            solicitari).
+            Defineste necesarul de resurse. La alocare, administratorul adauga automat un bonus de <span className="font-semibold text-foreground">10%</span>.
           </p>
         </div>
 
@@ -234,7 +238,7 @@ export default function ProfesorCursuriPage() {
               type="number"
               value={maxStudents}
               min={1}
-              onChange={(e) => setMaxStudents(Number(e.target.value))}
+              onChange={(e) => setMaxStudents(e.target.value)}
               className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
             />
             <p className="mt-1 text-[11px] text-muted-foreground">Folosit pentru planificare/inscrieri.</p>
@@ -249,7 +253,9 @@ export default function ProfesorCursuriPage() {
                 </div>
               ) : (
                 requirements.map((r, i) => {
-                  const bonusPreview = ceil10Percent(Number(r.required_amount));
+                  const perStudent = Number(r.required_per_student) || 0;
+                  const totalNeeded = Math.max(0, perStudent * (Number(maxStudents) || 0));
+                  const bonusPreview = ceil10Percent(totalNeeded);
                   return (
                     <div key={`${r.resource_type}-${i}`} className="grid gap-2 sm:grid-cols-[260px_140px_1fr_96px] sm:items-center">
                       <select
@@ -268,15 +274,17 @@ export default function ProfesorCursuriPage() {
                       <input
                         type="number"
                         min={0}
-                        value={r.required_amount}
+                        value={r.required_per_student}
                         onChange={(e) =>
-                          setRequirements((prev) => prev.map((x, idx) => (idx === i ? { ...x, required_amount: Number(e.target.value) } : x)))
+                          setRequirements((prev) =>
+                            prev.map((x, idx) => (idx === i ? { ...x, required_per_student: e.target.value } : x))
+                          )
                         }
                         className="w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
                       />
 
                       <div className="text-[11px] text-muted-foreground sm:text-xs">
-                        Bonus profesor (10%): <span className="font-mono text-foreground">{bonusPreview}</span>
+                        {perStudent}/student → {totalNeeded} total · Bonus 10%: <span className="font-mono text-foreground">{bonusPreview}</span>
                       </div>
 
                       <button
@@ -296,7 +304,7 @@ export default function ProfesorCursuriPage() {
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <button
                 type="button"
-                onClick={() => setRequirements((prev) => [...prev, { resource_type: "tokens", required_amount: 0 }])}
+                onClick={() => setRequirements((prev) => [...prev, { resource_type: "tokens", required_per_student: "" }])}
                 className="inline-flex items-center justify-center border border-border bg-muted/20 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/40"
               >
                 Adauga resursa
@@ -365,11 +373,25 @@ export default function ProfesorCursuriPage() {
                             "—"
                           ) : (
                             <div className="space-y-0.5">
-                              <div>{reqs.map((r) => formatRequirementShort(r)).join(", ")}</div>
+                              <div>
+                                {reqs
+                                  .map((r) => ({
+                                    resource_type: r.resource_type,
+                                    required_per_student: r.required_per_student ?? (r.required_amount ?? 0),
+                                  }))
+                                  .map((r) => formatRequirementShort(r, c.max_students))
+                                  .join(", ")}
+                              </div>
                               <div className="text-[11px] text-muted-foreground">
                                 Bonus profesor (10%):{" "}
                                 <span className="font-mono text-foreground">
-                                  {reqs.map((r) => `${formatResourceLabel(r.resource_type)}: ${ceil10Percent(r.required_amount)}`).join(" · ")}
+                                  {reqs
+                                    .map((r) => {
+                                      const perStudent = r.required_per_student ?? (r.required_amount ?? 0);
+                                      const total = Math.max(0, perStudent * c.max_students);
+                                      return `${formatResourceLabel(r.resource_type)}: ${ceil10Percent(total)}`;
+                                    })
+                                    .join(" · ")}
                                 </span>
                               </div>
                             </div>
