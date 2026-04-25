@@ -175,6 +175,7 @@ export default function AdminHomePage() {
           { href: "/admin/roles", title: "Roluri", desc: "utilizatori" },
           { href: "/admin/resurse", title: "Resurse", desc: "alocări & activități" },
           { href: "/admin/statistici", title: "Statistici", desc: "utilizare resurse" },
+          { href: "/admin/outbox", title: "Outbox", desc: "emailuri simulate" },
         ].map((x) => (
           <Link
             key={x.href}
@@ -194,7 +195,7 @@ export default function AdminHomePage() {
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2 lg:items-start">
         <Card className="shadow-sm">
-          <CardHeader className="space-y-1 pb-4">
+          <CardHeader className="space-y-1 pb-6">
             <CardTitle className="text-base font-semibold tracking-tight">Necesită alocare</CardTitle>
             <p className="text-xs text-muted-foreground">Cursuri cu necesar setat, dar fără alocare completă.</p>
           </CardHeader>
@@ -206,7 +207,7 @@ export default function AdminHomePage() {
             ) : coursesNeedingAllocation.length === 0 ? (
               <div className="px-5 pb-5 text-sm text-muted-foreground">Totul e alocat.</div>
             ) : (
-              <div className="overflow-hidden border-t border-border/60 pt-2">
+              <div className="overflow-hidden border-t border-border/60 pt-4">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -258,7 +259,7 @@ export default function AdminHomePage() {
         </Card>
 
         <Card className="shadow-sm">
-          <CardHeader className="space-y-1 pb-4">
+          <CardHeader className="space-y-1 pb-6">
             <CardTitle className="text-base font-semibold tracking-tight">Escalări la admin</CardTitle>
             <p className="text-xs text-muted-foreground">Cereri escaladate de profesori.</p>
           </CardHeader>
@@ -270,7 +271,7 @@ export default function AdminHomePage() {
             ) : escalated.length === 0 ? (
               <div className="px-5 pb-5 text-sm text-muted-foreground">Nu există escalări.</div>
             ) : (
-              <div className="divide-y divide-border/50 border-t border-border/60 pt-2">
+              <div className="divide-y divide-border/50 border-t border-border/60 pt-4">
                 {escalated.slice(0, 8).map((r) => {
                   const c = courses.find((x) => x.id === r.course_id);
                   return (

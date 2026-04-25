@@ -424,6 +424,9 @@ begin
   );
 end;$$;
 
+revoke all on function public.audit_log(text, text, text, bigint, text, jsonb) from public;
+grant execute on function public.audit_log(text, text, text, bigint, text, jsonb) to authenticated;
+
 create or replace function public.trg_audit_user_roles()
 returns trigger
 language plpgsql

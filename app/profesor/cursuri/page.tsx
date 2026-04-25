@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type Course = {
   id: number;
@@ -231,13 +233,15 @@ export default function ProfesorCursuriPage() {
         </div>
       </header>
 
-      <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm md:p-6">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-semibold tracking-tight text-foreground">Creeaza curs</h2>
-          <p className="text-xs text-muted-foreground">
-            Defineste necesarul de resurse. La alocare, administratorul adauga automat un bonus de <span className="font-semibold text-foreground">10%</span>.
+      <Card className="shadow-sm">
+        <CardHeader className="space-y-1 pb-6">
+          <CardTitle className="text-base font-semibold tracking-tight">Creeaza curs</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Defineste necesarul de resurse. La alocare, administratorul adauga automat un bonus de{" "}
+            <span className="font-semibold text-foreground">10%</span>.
           </p>
-        </div>
+        </CardHeader>
+        <CardContent className="pt-0">
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <div className="md:col-span-2">
@@ -267,7 +271,7 @@ export default function ProfesorCursuriPage() {
               value={maxStudents}
               min={1}
               onChange={(e) => setMaxStudents(e.target.value)}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              className="mt-1 w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
             />
             <p className="mt-1 text-[11px] text-muted-foreground">Folosit pentru planificare/inscrieri.</p>
           </div>
@@ -285,7 +289,7 @@ export default function ProfesorCursuriPage() {
                   const totalNeeded = Math.max(0, perStudent * (Number(maxStudents) || 0));
                   const bonusPreview = ceil10Percent(totalNeeded);
                   return (
-                    <div key={`${r.resource_type}-${i}`} className="grid gap-2 sm:grid-cols-[260px_140px_1fr_96px] sm:items-center">
+                    <div key={`${r.resource_type}-${i}`} className="grid gap-2 sm:grid-cols-[260px_140px_1fr_auto] sm:items-center">
                       <select
                         value={r.resource_type}
                         onChange={(e) =>
@@ -293,7 +297,7 @@ export default function ProfesorCursuriPage() {
                             prev.map((x, idx) => (idx === i ? { ...x, resource_type: e.target.value as RequirementDraft["resource_type"] } : x))
                           )
                         }
-                        className="w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                        className="w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
                       >
                         <option value="tokens">Token-uri AI</option>
                         <option value="vps_subscription">Abonamente VPS</option>
@@ -308,21 +312,22 @@ export default function ProfesorCursuriPage() {
                             prev.map((x, idx) => (idx === i ? { ...x, required_per_student: e.target.value } : x))
                           )
                         }
-                        className="w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                        className="w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
                       />
 
                       <div className="text-[11px] text-muted-foreground sm:text-xs">
                         {perStudent}/student → {totalNeeded} total · Bonus 10%: <span className="font-mono text-foreground">{bonusPreview}</span>
                       </div>
 
-                      <button
+                      <Button
                         type="button"
+                        size="sm"
+                        variant="outline"
                         onClick={() => setRequirements((prev) => prev.filter((_, idx) => idx !== i))}
-                        className="border border-input/60 bg-card px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/40"
                         title="Sterge rand"
                       >
                         Sterge
-                      </button>
+                      </Button>
                     </div>
                   );
                 })
@@ -330,33 +335,37 @@ export default function ProfesorCursuriPage() {
             </div>
 
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="outline"
                 onClick={() => setRequirements((prev) => [...prev, { resource_type: "tokens", required_per_student: "" }])}
-                className="inline-flex items-center justify-center border border-border bg-muted/20 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/40"
               >
                 Adauga resursa
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
                 disabled={createCourseMutation.isPending}
                 onClick={() => createCourseMutation.mutate()}
-                className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
               >
                 {createCourseMutation.isPending ? "Se creeaza..." : "Creeaza curs"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
-      </section>
+        </CardContent>
+      </Card>
 
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="font-mono text-sm font-semibold text-foreground">Cursurile mele</h2>
-            <p className="text-xs text-muted-foreground">Lista cursurilor create de tine, cu resursele declarate.</p>
+      <Card className="mt-6 shadow-sm">
+        <CardHeader className="flex flex-col gap-2 pb-6 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <CardTitle className="text-base font-semibold tracking-tight">Cursurile mele</CardTitle>
+            <p className="text-sm text-muted-foreground">Lista cursurilor create de tine, cu resursele declarate.</p>
           </div>
-        </div>
+          <Badge variant="secondary">{courses.length}</Badge>
+        </CardHeader>
+        <CardContent className="pt-0">
 
         {coursesQuery.isLoading ? (
           <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
@@ -365,16 +374,16 @@ export default function ProfesorCursuriPage() {
             Eroare la incarcarea cursurilor. Incearca refresh.
           </div>
         ) : (
-          <div className="mt-4">
+          <div className="mt-2 overflow-hidden rounded-md border border-border/60 bg-muted/10">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[64px] text-center">#</TableHead>
-                  <TableHead>Titlu</TableHead>
-                  <TableHead className="text-right">Max studenti</TableHead>
-                  <TableHead>Resurse necesare</TableHead>
-                  <TableHead className="text-right">Creat la</TableHead>
-                  <TableHead className="text-right">Actiuni</TableHead>
+                  <TableHead className="w-[64px] px-5 py-4 text-center">#</TableHead>
+                  <TableHead className="px-5 py-4">Titlu</TableHead>
+                  <TableHead className="px-5 py-4 text-right">Max</TableHead>
+                  <TableHead className="px-5 py-4">Resurse</TableHead>
+                  <TableHead className="px-5 py-4 text-right">Creat</TableHead>
+                  <TableHead className="px-5 py-4 text-right">Actiune</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -388,16 +397,16 @@ export default function ProfesorCursuriPage() {
                   courses.map((c, idx) => {
                     const reqs = (requirementsByCourse[c.id] ?? []).sort((a, b) => a.resource_type.localeCompare(b.resource_type));
                     return (
-                      <TableRow key={c.id}>
-                        <TableCell className="text-center font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
-                        <TableCell className="min-w-[220px]">
+                      <TableRow key={c.id} className="hover:bg-muted/20">
+                        <TableCell className="px-5 py-4 text-center font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
+                        <TableCell className="min-w-[220px] px-5 py-4">
                           <div className="space-y-0.5">
                             <p className="text-sm font-medium text-foreground">{c.title}</p>
                             {c.description ? <p className="text-xs text-muted-foreground">{c.description}</p> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
-                        <TableCell className="min-w-[260px] text-xs text-muted-foreground">
+                        <TableCell className="px-5 py-4 text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
+                        <TableCell className="min-w-[260px] px-5 py-4 text-xs text-muted-foreground">
                           {reqs.length === 0 ? (
                             "—"
                           ) : (
@@ -426,16 +435,13 @@ export default function ProfesorCursuriPage() {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-xs text-muted-foreground">
+                        <TableCell className="px-5 py-4 text-right text-xs text-muted-foreground">
                           {new Date(c.created_at).toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-right">
-                          <Link
-                            href={`/profesor/cursuri/${c.id}`}
-                            className="inline-flex items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground"
-                          >
-                            Gestioneaza
-                          </Link>
+                        <TableCell className="px-5 py-4 text-right">
+                          <Button asChild size="sm">
+                            <Link href={`/profesor/cursuri/${c.id}`}>Gestioneaza</Link>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -445,7 +451,8 @@ export default function ProfesorCursuriPage() {
             </Table>
           </div>
         )}
-      </section>
+        </CardContent>
+      </Card>
 
     </main>
   );

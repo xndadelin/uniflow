@@ -4,6 +4,7 @@ import { Providers } from "@/app/providers";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { AppTopNav } from "@/components/AppTopNav";
+import { PageViewLogger } from "@/app/PageViewLogger";
 
 export const metadata: Metadata = {
   title: "UniFlow",
@@ -40,6 +41,7 @@ export default async function RootLayout({
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col bg-background font-sans text-foreground">
         <Providers>
+          <PageViewLogger />
           <AppTopNav
             displayName={displayName}
             isAuthenticated={Boolean(user)}
