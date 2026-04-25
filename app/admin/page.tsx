@@ -313,7 +313,7 @@ export default function AdminHomePage() {
       <Card className="mt-8 shadow-sm">
         <CardHeader className="flex flex-col gap-2 pb-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-base font-semibold tracking-tight">Cursuri (ultimele)</CardTitle>
+            <CardTitle className="text-base font-semibold tracking-tight">Cursuri</CardTitle>
             <p className="text-xs text-muted-foreground">Intră pe un curs pentru alocări și activități.</p>
           </div>
           <Button asChild size="sm" variant="outline">
