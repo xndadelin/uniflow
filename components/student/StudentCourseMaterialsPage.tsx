@@ -34,6 +34,35 @@ function getErrorMessage(err: unknown) {
   return "Eroare la request.";
 }
 
+function MaterialsListSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <div className="space-y-2">
+          <div className="h-4 w-24 animate-pulse rounded bg-muted/60" />
+          <div className="h-9 w-full animate-pulse rounded-md bg-muted/40" />
+        </div>
+        <div className="h-9 w-40 animate-pulse rounded-md bg-muted/40 sm:ml-auto" />
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 divide-y divide-border/30">
+        {Array.from({ length: 6 }).map((_, idx) => (
+          <div key={idx} className="px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="h-4 w-2/3 animate-pulse rounded bg-muted/50" />
+                <div className="h-3 w-5/6 animate-pulse rounded bg-muted/30" />
+                <div className="h-3 w-24 animate-pulse rounded bg-muted/25" />
+              </div>
+              <div className="h-4 w-14 animate-pulse rounded bg-muted/25" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function StudentCourseMaterialsPage({ courseId }: { courseId: number }) {
   const supabase = useMemo(() => createClient(), []);
   const [search, setSearch] = useState("");
@@ -71,6 +100,8 @@ export function StudentCourseMaterialsPage({ courseId }: { courseId: number }) {
 
   const total = filtered.length;
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const allMaterialsCount = materialsQuery.data?.length ?? 0;
+  const hasSearch = Boolean(search.trim());
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
@@ -80,7 +111,14 @@ export function StudentCourseMaterialsPage({ courseId }: { courseId: number }) {
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
             Materiale{courseQuery.data?.title ? ` · ${courseQuery.data.title}` : ""}
           </h1>
-          {courseQuery.data?.description ? <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{courseQuery.data.description}</p> : null}
+          {courseQuery.isLoading ? <div className="mt-3 h-4 w-72 animate-pulse rounded bg-muted/40" /> : null}
+          {courseQuery.isError ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Nu pot încărca detaliile cursului. <span className="font-mono text-xs">{getErrorMessage(courseQuery.error)}</span>
+            </p>
+          ) : courseQuery.data?.description ? (
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{courseQuery.data.description}</p>
+          ) : null}
         </div>
         <div className="flex gap-3">
           <Button asChild variant="outline" size="sm">
@@ -96,11 +134,33 @@ export function StudentCourseMaterialsPage({ courseId }: { courseId: number }) {
         </CardHeader>
         <CardContent>
           {materialsQuery.isLoading ? (
-            <div className="text-sm text-muted-foreground">Se incarca...</div>
+            <MaterialsListSkeleton />
           ) : materialsQuery.isError ? (
-            <div className="text-sm text-destructive">Eroare: {getErrorMessage(materialsQuery.error)}</div>
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+              <div className="font-medium">Nu am putut încărca materialele.</div>
+              <div className="mt-1 font-mono text-xs opacity-90">{getErrorMessage(materialsQuery.error)}</div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => materialsQuery.refetch()}>
+                  Reîncearcă
+                </Button>
+                <Button asChild size="sm" variant="ghost">
+                  <Link href={`/cursuri/${courseId}`}>Înapoi la curs</Link>
+                </Button>
+              </div>
+            </div>
+          ) : allMaterialsCount === 0 ? (
+            <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
+              Nu există materiale pentru acest curs încă.
+            </div>
           ) : total === 0 ? (
-            <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista materiale.</div>
+            <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
+              Nu am găsit materiale pentru <span className="font-mono text-xs">“{search.trim()}”</span>.
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setSearch("")}>
+                  Resetează căutarea
+                </Button>
+              </div>
+            </div>
           ) : (
             <>
               <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -115,6 +175,7 @@ export function StudentCourseMaterialsPage({ courseId }: { courseId: number }) {
                     }}
                     placeholder="Titlu / descriere..."
                   />
+                  {hasSearch ? <div className="text-[11px] text-muted-foreground">{total} rezultate</div> : null}
                 </div>
                 <div className="sm:pb-[2px]">
                   <Pagination variant="compact" page={page} pageSize={pageSize} totalItems={total} onPageChange={setPage} />

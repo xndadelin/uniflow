@@ -34,6 +34,41 @@ function isPdfUrl(url: string) {
   }
 }
 
+function DetailSkeleton({ courseId }: { courseId: number }) {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[360px_1fr] lg:items-start">
+      <Card className="lg:sticky lg:top-20">
+        <CardHeader className="space-y-2">
+          <div className="h-4 w-20 animate-pulse rounded bg-muted/40" />
+          <div className="h-3 w-48 animate-pulse rounded bg-muted/25" />
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div className="space-y-2">
+            <div className="h-3 w-16 animate-pulse rounded bg-muted/25" />
+            <div className="h-4 w-24 animate-pulse rounded bg-muted/40" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-3 w-16 animate-pulse rounded bg-muted/25" />
+            <div className="h-4 w-40 animate-pulse rounded bg-muted/40" />
+          </div>
+          <div className="h-9 w-full animate-pulse rounded-md bg-muted/35" />
+          <div className="text-[11px] text-muted-foreground">Curs #{courseId}</div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="space-y-2">
+          <div className="h-4 w-20 animate-pulse rounded bg-muted/40" />
+          <div className="h-3 w-96 max-w-full animate-pulse rounded bg-muted/25" />
+        </CardHeader>
+        <CardContent>
+          <div className="h-[70vh] w-full animate-pulse rounded-md bg-muted/25 md:h-[78vh]" />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export function StudentCourseMaterialDetailPage({ courseId, materialId }: { courseId: number; materialId: number }) {
   const supabase = useMemo(() => createClient(), []);
 
@@ -59,7 +94,8 @@ export function StudentCourseMaterialDetailPage({ courseId, materialId }: { cour
       <header className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Student</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{m?.title ?? "Material"}</h1>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{m?.title ?? (materialQuery.isLoading ? "Se încarcă..." : "Material")}</h1>
+          {materialQuery.isLoading ? <div className="mt-3 h-4 w-96 max-w-full animate-pulse rounded bg-muted/35" /> : null}
           {m?.description ? <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{m.description}</p> : null}
         </div>
         <div className="flex gap-2">
@@ -77,13 +113,29 @@ export function StudentCourseMaterialDetailPage({ courseId, materialId }: { cour
       </header>
 
       {materialQuery.isLoading ? (
-        <div className="text-sm text-muted-foreground">Se incarca...</div>
+        <DetailSkeleton courseId={courseId} />
       ) : materialQuery.isError ? (
-        <div className="rounded-md bg-destructive/5 p-4 text-sm text-destructive">
-          Eroare: <span className="font-mono text-xs">{getErrorMessage(materialQuery.error)}</span>
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
+          <div className="font-medium">Nu am putut încărca materialul.</div>
+          <div className="mt-1 font-mono text-xs opacity-90">{getErrorMessage(materialQuery.error)}</div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => materialQuery.refetch()}>
+              Reîncearcă
+            </Button>
+            <Button asChild size="sm" variant="ghost">
+              <Link href={`/cursuri/${courseId}/materiale`}>Înapoi la listă</Link>
+            </Button>
+          </div>
         </div>
       ) : !m ? (
-        <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Material inexistent.</div>
+        <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
+          Material inexistent sau nu ai acces la el.
+          <div className="mt-4">
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/cursuri/${courseId}/materiale`}>Înapoi la materiale</Link>
+            </Button>
+          </div>
+        </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[360px_1fr] lg:items-start">
           <Card className="lg:sticky lg:top-20">
