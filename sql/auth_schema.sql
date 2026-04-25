@@ -203,6 +203,16 @@ using (
   )
 );
 
+drop policy if exists "app_users_select_audit" on public.app_users;
+create policy "app_users_select_audit"
+on public.app_users
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or public.is_audit(auth.uid())
+);
+
 drop policy if exists "app_users_update_self_or_admin" on public.app_users;
 create policy "app_users_update_self_or_admin"
 on public.app_users
@@ -358,7 +368,7 @@ $$;
 create table if not exists public.audit_logs (
   id bigserial primary key,
   created_at timestamptz not null default now(),
-  actor_id uuid,
+  actor_id uuid references public.app_users(id) on delete set null,
   action text not null,
   entity_table text,
   entity_id text,
@@ -400,9 +410,41 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_headers jsonb;
+  v_method text;
+  v_path text;
+  v_request jsonb;
 begin
+  v_headers := null;
+  begin
+    v_headers := nullif(current_setting('request.headers', true), '')::jsonb;
+  exception when others then
+    v_headers := null;
+  end;
+
+  v_method := nullif(current_setting('request.method', true), '');
+  v_path := nullif(current_setting('request.path', true), '');
+
+  v_request := jsonb_strip_nulls(
+    jsonb_build_object(
+      'method', v_method,
+      'path', v_path,
+      'headers', v_headers
+    )
+  );
+
   insert into public.audit_logs (actor_id, action, entity_table, entity_id, course_id, message, metadata)
-  values (auth.uid(), _action, _entity_table, _entity_id, _course_id, _message, coalesce(_metadata, '{}'::jsonb));
+  values (
+    auth.uid(),
+    _action,
+    _entity_table,
+    _entity_id,
+    _course_id,
+    _message,
+    coalesce(_metadata, '{}'::jsonb) ||
+      case when v_request <> '{}'::jsonb then jsonb_build_object('request', v_request) else '{}'::jsonb end
+  );
 end;
 $$;
 
@@ -646,6 +688,15 @@ begin
           );
       end if;
     end loop;
+
+    -- Drop noisy system timestamps. If only these changed, skip logging.
+    v_changed_keys := array_remove(v_changed_keys, 'updated_at');
+    v_changed_keys := array_remove(v_changed_keys, 'allocated_at');
+    v_changed_keys := array_remove(v_changed_keys, 'created_at');
+
+    if array_length(v_changed_keys, 1) is null or array_length(v_changed_keys, 1) = 0 then
+      return new;
+    end if;
   end if;
 
   -- Best-effort entity id
@@ -863,7 +914,9 @@ values
   ('Plan de invatare', 'Plan personalizat de invatare', 120)
 on conflict (title) do update
 set description = excluded.description,
-    token_cost = excluded.token_cost;
+    token_cost = excluded.token_cost
+where public.admin_activities.description is distinct from excluded.description
+   or public.admin_activities.token_cost is distinct from excluded.token_cost;
 
 -- ============================================================
 -- Course-scoped activities (token consumption catalog per course)
@@ -906,7 +959,9 @@ begin
     (_course_id, 'Plan de invatare', 'Plan personalizat de invatare', 120)
   on conflict (course_id, title) do update
   set description = excluded.description,
-      token_cost = excluded.token_cost;
+      token_cost = excluded.token_cost
+  where public.course_activities.description is distinct from excluded.description
+     or public.course_activities.token_cost is distinct from excluded.token_cost;
 end;
 $$;
 
@@ -933,7 +988,9 @@ begin
     (new.id, 'Plan de invatare', 'Plan personalizat de invatare', 120)
   on conflict (course_id, title) do update
   set description = excluded.description,
-      token_cost = excluded.token_cost;
+      token_cost = excluded.token_cost
+  where public.course_activities.description is distinct from excluded.description
+     or public.course_activities.token_cost is distinct from excluded.token_cost;
 
   return new;
 end;
@@ -972,7 +1029,9 @@ begin
   values (_course_id, trim(_title), nullif(trim(_description), ''), _token_cost)
   on conflict (course_id, title) do update
   set description = excluded.description,
-      token_cost = excluded.token_cost;
+      token_cost = excluded.token_cost
+  where public.course_activities.description is distinct from excluded.description
+     or public.course_activities.token_cost is distinct from excluded.token_cost;
 end;
 $$;
 
@@ -1071,7 +1130,9 @@ begin
     ('Plan de invatare', 'Plan personalizat de invatare', 120)
   on conflict (title) do update
   set description = excluded.description,
-      token_cost = excluded.token_cost;
+      token_cost = excluded.token_cost
+  where public.admin_activities.description is distinct from excluded.description
+     or public.admin_activities.token_cost is distinct from excluded.token_cost;
 end;
 $$;
 
@@ -1187,7 +1248,9 @@ begin
   on conflict (resource_type) do update
   set total_amount = excluded.total_amount,
       remaining_amount = excluded.remaining_amount,
-      updated_at = now();
+      updated_at = now()
+  where public.resource_inventory.total_amount is distinct from excluded.total_amount
+     or public.resource_inventory.remaining_amount is distinct from excluded.remaining_amount;
 end;
 $$;
 
@@ -1956,7 +2019,8 @@ begin
   values (_assignment_id, v_course_id, auth.uid(), nullif(trim(_link_url), ''))
   on conflict (assignment_id, student_id) do update
   set link_url = excluded.link_url,
-      created_at = now();
+      created_at = now()
+  where public.course_homework_submissions_v2.link_url is distinct from excluded.link_url;
 end;
 $$;
 
@@ -2185,7 +2249,10 @@ begin
         0
       ),
       allocated_by = excluded.allocated_by,
-      allocated_at = now();
+      allocated_at = now()
+  where public.course_resource_allocations.allocated_amount is distinct from excluded.allocated_amount
+     or public.course_resource_allocations.professor_bonus_amount is distinct from excluded.professor_bonus_amount
+     or public.course_resource_allocations.allocated_by is distinct from excluded.allocated_by;
 
   -- Auto-distribute to currently enrolled students, based on per-student requirement.
   perform public.distribute_course_resources_to_students(_course_id, _resource_type);

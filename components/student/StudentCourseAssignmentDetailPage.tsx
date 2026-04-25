@@ -225,6 +225,33 @@ export function StudentCourseAssignmentDetailPage({ courseId, assignmentId }: { 
                   }}
                   className="w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
                 />
+                {files.length ? (
+                  <div className="rounded-md border border-border/60 bg-muted/10 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-muted-foreground">
+                        Fișiere selectate: <span className="font-mono text-foreground">{files.length}</span>
+                      </div>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setFiles([])}>
+                        Golește
+                      </Button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {files.slice(0, 12).map((f) => (
+                        <button
+                          key={`${f.name}__${f.size}__${f.lastModified}`}
+                          type="button"
+                          onClick={() => setFiles((prev) => prev.filter((x) => x !== f))}
+                          className="inline-flex items-center gap-1 rounded-md bg-muted/20 px-2 py-1 text-[11px] text-foreground transition hover:bg-muted/30"
+                          title="Click pentru a scoate fișierul din listă"
+                        >
+                          <span className="max-w-[220px] truncate">{f.name}</span>
+                          <span className="text-muted-foreground">×</span>
+                        </button>
+                      ))}
+                      {files.length > 12 ? <div className="px-2 py-1 text-[11px] text-muted-foreground">+{files.length - 12}…</div> : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <div className="flex justify-end">
                 <Button onClick={() => submitMutation.mutate()} disabled={submitMutation.isPending}>

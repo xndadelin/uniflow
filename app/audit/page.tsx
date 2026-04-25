@@ -25,6 +25,13 @@ type AuditLogRow = {
   metadata: unknown;
 };
 
+type ActorRow = { id: string; full_name: string | null; email: string };
+type AuditLogRowWithActor = AuditLogRow & { actor: ActorRow | null };
+
+function getActor(a: ActorRow | null | undefined) {
+  return a ?? null;
+}
+
 function getErrorMessage(err: unknown) {
   if (!err) return "Eroare necunoscuta.";
   if (err instanceof Error) return err.message;
@@ -42,14 +49,90 @@ function prettyJson(x: unknown) {
   }
 }
 
+function normalizeMetadata(meta: unknown): unknown {
+  if (typeof meta !== "string") return meta;
+  try {
+    return JSON.parse(meta) as unknown;
+  } catch {
+    return meta;
+  }
+}
+
 function getChangedKeys(metadata: unknown): string[] {
+  metadata = normalizeMetadata(metadata);
   if (!metadata || typeof metadata !== "object") return [];
   if (!("changed_keys" in metadata)) return [];
   const v = (metadata as { changed_keys?: unknown }).changed_keys;
   return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
 }
 
+function deriveChangedKeysFromOldNew(metadata: unknown): string[] {
+  metadata = normalizeMetadata(metadata);
+  if (!metadata || typeof metadata !== "object") return [];
+  const m = metadata as { old?: unknown; new?: unknown; op?: unknown };
+  if (typeof m.op === "string" && m.op !== "UPDATE") return [];
+  if (!m.old || !m.new || typeof m.old !== "object" || typeof m.new !== "object") return [];
+  const oldObj = m.old as Record<string, unknown>;
+  const newObj = m.new as Record<string, unknown>;
+  const keys = new Set<string>([...Object.keys(oldObj), ...Object.keys(newObj)]);
+  const changed: string[] = [];
+  for (const k of keys) {
+    const a = oldObj[k];
+    const b = newObj[k];
+    const same =
+      a === b ||
+      (() => {
+        try {
+          return JSON.stringify(a) === JSON.stringify(b);
+        } catch {
+          return false;
+        }
+      })();
+    if (!same) changed.push(k);
+  }
+  return changed;
+}
+
+function getAnyChangedKeys(metadata: unknown): string[] {
+  const direct = getChangedKeys(metadata);
+  if (direct.length) return direct;
+  return deriveChangedKeysFromOldNew(metadata);
+}
+
+function isNoopUpdate(metadata: unknown): boolean {
+  metadata = normalizeMetadata(metadata);
+  if (!metadata || typeof metadata !== "object") return false;
+  const m = metadata as { old?: unknown; new?: unknown; op?: unknown };
+  if (m.op !== "UPDATE") return false;
+  try {
+    return JSON.stringify(m.old ?? null) === JSON.stringify(m.new ?? null);
+  } catch {
+    return false;
+  }
+}
+
+function isTimestampOnlyUpdate(metadata: unknown): boolean {
+  metadata = normalizeMetadata(metadata);
+  if (!metadata || typeof metadata !== "object") return false;
+  const m = metadata as { op?: unknown };
+  if (m.op !== "UPDATE") return false;
+  const changed = getAnyChangedKeys(metadata);
+  if (changed.length === 0) return false;
+  const noisy = new Set([
+    "updated_at",
+    "created_at",
+    "allocated_at",
+    "decided_at",
+    "escalated_at",
+    "assigned_at",
+    "sent_at",
+    "enrolled_at",
+  ]);
+  return changed.every((k) => noisy.has(k));
+}
+
 function getChanges(metadata: unknown): unknown {
+  metadata = normalizeMetadata(metadata);
   if (!metadata || typeof metadata !== "object") return null;
   if (!("changes" in metadata)) return null;
   return (metadata as { changes?: unknown }).changes ?? null;
@@ -59,8 +142,9 @@ export default function AuditPage() {
   const supabase = useMemo(() => createClient(), []);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<AuditLogRow | null>(null);
+  const [selected, setSelected] = useState<AuditLogRowWithActor | null>(null);
   const pageSize = 25;
+  const fetchWindow = 500; // how many newest logs we paginate locally
 
   const auditCheckQuery = useQuery({
     queryKey: ["audit-check"],
@@ -80,19 +164,29 @@ export default function AuditPage() {
     queryKey: ["audit-logs", { page, search }],
     enabled: auditCheckQuery.data?.isAudit === true,
     queryFn: async () => {
-      const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
       const q = search.trim().toLowerCase();
 
-      // We keep filtering client-side to avoid "or" full-text complexity for now.
+      // We paginate locally so we can filter noisy timestamp-only updates.
+      // This means the UI reflects the filtered total consistently.
       const res = await supabase
         .from("audit_logs")
         .select("id,created_at,actor_id,action,entity_table,entity_id,course_id,message,metadata", { count: "exact" })
         .order("created_at", { ascending: false })
-        .range(from, to);
+        .limit(fetchWindow);
 
       if (res.error) throw res.error;
       let rows = (res.data ?? []) as AuditLogRow[];
+
+      // Best-effort: fetch actor names/emails. If RLS disallows this, we fall back to actor_id.
+      const actorIds = Array.from(new Set(rows.map((r) => r.actor_id).filter((x): x is string => typeof x === "string" && x.length > 0)));
+      const actorsById = new Map<string, ActorRow>();
+      if (actorIds.length) {
+        const actorsRes = await supabase.from("app_users").select("id,full_name,email").in("id", actorIds);
+        if (!actorsRes.error) {
+          for (const a of (actorsRes.data ?? []) as ActorRow[]) actorsById.set(a.id, a);
+        }
+      }
+      rows = rows.map((r) => ({ ...r, actor: r.actor_id ? actorsById.get(r.actor_id) ?? null : null })) as AuditLogRowWithActor[];
 
       if (q) {
         rows = rows.filter((r) => {
@@ -103,7 +197,16 @@ export default function AuditPage() {
         });
       }
 
-      return { rows, count: res.count ?? 0 };
+      const filtered = rows.filter((r) => !isTimestampOnlyUpdate(r.metadata) && !isNoopUpdate(r.metadata));
+      const filteredTotal = filtered.length;
+      const start = (page - 1) * pageSize;
+      const paged = filtered.slice(start, start + pageSize);
+
+      return {
+        rows: paged as AuditLogRowWithActor[],
+        filteredTotal,
+        dbTotal: res.count ?? 0,
+      };
     },
   });
 
@@ -143,16 +246,17 @@ export default function AuditPage() {
     );
   }
 
-  const rows = logsQuery.data?.rows ?? [];
-  const count = logsQuery.data?.count ?? 0;
+  const displayRows = (logsQuery.data?.rows ?? []) as AuditLogRowWithActor[];
+  const filteredTotal = (logsQuery.data as { filteredTotal?: number } | undefined)?.filteredTotal ?? 0;
+  const dbTotal = (logsQuery.data as { dbTotal?: number } | undefined)?.dbTotal ?? 0;
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-8 md:px-6">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <main className="mx-auto flex w-full max-w-[88rem] flex-1 flex-col px-4 py-10 md:px-8">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Audit</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Jurnalizare</h1>
-          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+          <p className="mt-2 max-w-4xl text-sm text-muted-foreground">
             Evenimente generate automat (roluri, cereri resurse, materiale, teme, submisii).
           </p>
         </div>
@@ -162,15 +266,16 @@ export default function AuditPage() {
       </header>
 
       <Card>
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-base font-semibold tracking-tight">Audit logs</CardTitle>
+        <CardHeader className="space-y-2">
+          <CardTitle className="text-lg font-semibold tracking-tight">Audit logs</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Total: <span className="font-mono text-foreground">{count}</span>
+            Total (filtrat): <span className="font-mono text-foreground">{filteredTotal}</span>
+            <span className="ml-2 text-muted-foreground">(din {dbTotal} în DB, ultimele {fetchWindow} paginate local)</span>
           </p>
         </CardHeader>
         <CardContent className="p-0">
           <div className="sticky top-[60px] z-10 border-b border-border/60 bg-card/90 backdrop-blur supports-[backdrop-filter]:bg-card/70">
-            <div className="grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-end">
               <div className="space-y-1">
                 <Label htmlFor="audit-search" className="text-xs">
                   Cauta (local in pagina curenta)
@@ -186,7 +291,7 @@ export default function AuditPage() {
                 />
               </div>
               <div className="sm:pb-[2px]">
-                <Pagination variant="compact" page={page} pageSize={pageSize} totalItems={count} onPageChange={setPage} />
+                <Pagination variant="compact" page={page} pageSize={pageSize} totalItems={filteredTotal} onPageChange={setPage} />
               </div>
             </div>
           </div>
@@ -199,63 +304,74 @@ export default function AuditPage() {
                 Eroare: <span className="font-mono text-xs">{getErrorMessage(logsQuery.error)}</span>
               </div>
             </div>
-          ) : rows.length === 0 ? (
+          ) : displayRows.length === 0 ? (
             <div className="p-4">
-              <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista log-uri.</div>
+              <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+                Nu exista log-uri.
+              </div>
             </div>
           ) : (
-            <div className="max-h-[70vh] overflow-auto">
+            <div className="max-h-[74vh] overflow-auto">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/70">
                   <TableRow>
-                    <TableHead className="px-4 py-3">Timp</TableHead>
-                    <TableHead className="px-4 py-3">Actiune</TableHead>
-                    <TableHead className="px-4 py-3">Entity</TableHead>
-                    <TableHead className="px-4 py-3 text-right">Curs</TableHead>
+                    <TableHead className="px-5 py-4">Timp</TableHead>
+                    <TableHead className="px-5 py-4">Actiune</TableHead>
+                    <TableHead className="px-5 py-4">Entity</TableHead>
+                    <TableHead className="px-5 py-4 text-right">Curs</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r) => {
-                    const changed = getChangedKeys(r.metadata);
-                    const changedCount = changed.length;
-                    const showChanged = r.action.endsWith("_update") && changedCount > 0;
+                  {displayRows.map((r) => {
+                    const changed = getAnyChangedKeys(r.metadata);
+                    const showChanged = changed.length > 0;
+                    const openRow = () => setSelected(r);
+                    const a = getActor(r.actor);
+                    const actorLabel = a?.full_name?.trim() || a?.email || (r.actor_id ? r.actor_id : null);
+                    const actorLabelShort =
+                      actorLabel && actorLabel.includes("-") ? `${actorLabel.slice(0, 8)}…${actorLabel.slice(-4)}` : actorLabel;
                     return (
                       <TableRow
                         key={r.id}
                         role="button"
                         tabIndex={0}
-                        onClick={() => setSelected(r)}
+                        onClick={openRow}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            setSelected(r);
+                            openRow();
                           }
                         }}
                         className="cursor-pointer hover:bg-muted/20"
                       >
-                        <TableCell className="px-4 py-3 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        <TableCell onClick={openRow} className="px-5 py-4 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
                           {new Date(r.created_at).toLocaleString()}
                         </TableCell>
-                        <TableCell className="px-4 py-3">
-                          <div className="flex flex-col gap-1">
+                        <TableCell onClick={openRow} className="px-5 py-4">
+                          <div className="flex flex-col gap-1.5">
                             <div className="flex flex-wrap items-center gap-2">
-                              <div className="text-sm font-medium text-foreground">{r.action}</div>
-                              {showChanged ? (
-                                <Badge variant="outline" className="text-[10px]">
-                                  changed: {changedCount}
-                                </Badge>
-                              ) : null}
+                              <div className="text-sm font-semibold text-foreground">{r.action}</div>
+                              {showChanged
+                                ? changed.slice(0, 3).map((k) => (
+                                    <Badge key={`${r.id}-${k}`} variant="outline" className="text-[10px]">
+                                      {k}
+                                    </Badge>
+                                  ))
+                                : null}
                             </div>
+                            {actorLabelShort ? <div className="text-[11px] text-muted-foreground">by: {actorLabelShort}</div> : null}
                             {r.message ? <div className="text-[11px] text-muted-foreground">{r.message}</div> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+                        <TableCell onClick={openRow} className="px-5 py-4 text-xs text-muted-foreground">
                           <div className="flex flex-wrap items-center gap-2">
                             {r.entity_table ? <Badge variant="secondary">{r.entity_table}</Badge> : <Badge variant="outline">n/a</Badge>}
                             {r.entity_id ? <span className="font-mono">{r.entity_id}</span> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">{r.course_id ?? "-"}</TableCell>
+                        <TableCell onClick={openRow} className="px-5 py-4 text-right text-xs text-muted-foreground whitespace-nowrap">
+                          {r.course_id ?? "-"}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -266,15 +382,30 @@ export default function AuditPage() {
         </CardContent>
       </Card>
       <Dialog open={Boolean(selected)} onOpenChange={(open) => (!open ? setSelected(null) : null)}>
-        <DialogContent className="max-w-3xl p-0">
+        <DialogContent forceMount className="max-w-4xl p-0">
           {selected ? (
             <div className="overflow-hidden rounded-lg">
-              <DialogHeader className="space-y-1 border-b border-border/60 px-5 py-4">
-                <DialogTitle className="text-base font-semibold tracking-tight">
+              <DialogHeader className="space-y-2 border-b border-border/60 px-6 py-5">
+                <DialogTitle className="text-lg font-semibold tracking-tight">
                   #{selected.id} · <span className="font-mono">{selected.action}</span>
                 </DialogTitle>
                 <DialogDescription className="text-xs">
-                  {new Date(selected.created_at).toLocaleString()} ·{" "}
+                  {new Date(selected.created_at).toLocaleString()}
+                  {(() => {
+                    const a = getActor(selected.actor);
+                    const label = a?.full_name?.trim() || a?.email || (selected.actor_id ? selected.actor_id : null);
+                    const short = label && label.includes("-") ? `${label.slice(0, 8)}…${label.slice(-4)}` : label;
+                    return label ? (
+                    <>
+                      {" "}
+                      · by:{" "}
+                      <span className="font-mono">
+                        {short}
+                      </span>
+                    </>
+                    ) : null;
+                  })()}
+                  {" "}·{" "}
                   <span className="font-mono">
                     {selected.entity_table ?? "n/a"}
                     {selected.entity_id ? ` · ${selected.entity_id}` : ""}
@@ -283,7 +414,7 @@ export default function AuditPage() {
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="px-5 py-4">
+              <div className="px-6 py-5">
                 {selected.message ? <div className="mb-3 text-sm text-foreground">{selected.message}</div> : null}
 
                 {(() => {
