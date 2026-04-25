@@ -24,7 +24,13 @@ using (
   bucket_id = 'course-materials'
 );
 
--- 3) INSERT: only admin or course teacher can upload under course-<id>/
+-- 3) INSERT:
+-- - admin can upload anywhere in this bucket
+-- - course teacher can upload under:
+--     course-<id>/...
+--     homework/course-<id>/...
+-- - enrolled students can upload under:
+--     homework/course-<id>/...
 drop policy if exists "course_materials_objects_insert" on storage.objects;
 create policy "course_materials_objects_insert"
 on storage.objects
@@ -38,12 +44,21 @@ with check (
       select 1
       from public.courses c
       where c.teacher_id = auth.uid()
-        and ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+        and (
+          ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+          or ('homework/course-' || c.id::text || '/') = left(name, length('homework/course-' || c.id::text || '/'))
+        )
+    )
+    or exists (
+      select 1
+      from public.courses c
+      where public.is_enrolled_in_course(c.id, auth.uid())
+        and ('homework/course-' || c.id::text || '/') = left(name, length('homework/course-' || c.id::text || '/'))
     )
   )
 );
 
--- 4) UPDATE: only admin or course teacher can update objects under course-<id>/
+-- 4) UPDATE: admin/teacher can update under course-<id>/ or homework/course-<id>/
 drop policy if exists "course_materials_objects_update" on storage.objects;
 create policy "course_materials_objects_update"
 on storage.objects
@@ -57,7 +72,10 @@ using (
       select 1
       from public.courses c
       where c.teacher_id = auth.uid()
-        and ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+        and (
+          ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+          or ('homework/course-' || c.id::text || '/') = left(name, length('homework/course-' || c.id::text || '/'))
+        )
     )
   )
 )
@@ -69,12 +87,15 @@ with check (
       select 1
       from public.courses c
       where c.teacher_id = auth.uid()
-        and ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+        and (
+          ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+          or ('homework/course-' || c.id::text || '/') = left(name, length('homework/course-' || c.id::text || '/'))
+        )
     )
   )
 );
 
--- 5) DELETE: only admin or course teacher can delete objects under course-<id>/
+-- 5) DELETE: admin/teacher can delete under course-<id>/ or homework/course-<id>/
 drop policy if exists "course_materials_objects_delete" on storage.objects;
 create policy "course_materials_objects_delete"
 on storage.objects
@@ -88,7 +109,10 @@ using (
       select 1
       from public.courses c
       where c.teacher_id = auth.uid()
-        and ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+        and (
+          ('course-' || c.id::text || '/') = left(name, length('course-' || c.id::text || '/'))
+          or ('homework/course-' || c.id::text || '/') = left(name, length('homework/course-' || c.id::text || '/'))
+        )
     )
   )
 );

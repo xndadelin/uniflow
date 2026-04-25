@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Pagination } from "@/components/Pagination";
+import { Textarea } from "@/components/ui/textarea";
 
 type Course = {
   id: number;
@@ -36,6 +37,48 @@ type ResourceRequestRow = {
   resource_type: "tokens" | "vps_subscription";
   requested_amount: number;
   status: "pending" | "approved" | "rejected" | "escalated";
+  created_at: string;
+};
+
+type CourseAllocationRow = {
+  course_id: number;
+  resource_type: "tokens" | "vps_subscription";
+  professor_bonus_remaining: number;
+  professor_bonus_amount: number;
+};
+
+type HomeworkAssignmentRow = {
+  id: number;
+  course_id: number;
+  title: string;
+  description: string | null;
+  due_at: string | null;
+  created_at: string;
+};
+
+type HomeworkAssignmentFileRow = {
+  id: number;
+  assignment_id: number;
+  title: string | null;
+  url: string;
+  created_at: string;
+};
+
+type HomeworkSubmissionRow = {
+  id: number;
+  assignment_id: number;
+  course_id: number;
+  student_id: string;
+  link_url: string | null;
+  created_at: string;
+  app_users?: Array<{ full_name: string | null; email: string }> | null;
+};
+
+type HomeworkSubmissionFileRow = {
+  id: number;
+  submission_id: number;
+  title: string | null;
+  url: string;
   created_at: string;
 };
 
@@ -69,11 +112,19 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
   const [materialUrl, setMaterialUrl] = useState("");
   const [materialDescription, setMaterialDescription] = useState("");
   const [materialFiles, setMaterialFiles] = useState<File[]>([]);
-  const [view, setView] = useState<"materials" | "requests">("materials");
+  const [view, setView] = useState<"materials" | "homework" | "requests">("materials");
   const [materialsSearch, setMaterialsSearch] = useState<string>("");
   const [materialsPage, setMaterialsPage] = useState<number>(1);
   const [requestsPage, setRequestsPage] = useState<number>(1);
   const pageSize = 10;
+
+  const [assignmentTitle, setAssignmentTitle] = useState("");
+  const [assignmentDescription, setAssignmentDescription] = useState("");
+  const [assignmentDueAt, setAssignmentDueAt] = useState<string>("");
+  const [assignmentFiles, setAssignmentFiles] = useState<File[]>([]);
+  const [assignmentsSearch, setAssignmentsSearch] = useState<string>("");
+  const [assignmentsPage, setAssignmentsPage] = useState<number>(1);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<number | null>(null);
 
   const profesorCheckQuery = useQuery({
     queryKey: ["profesor-check"],
@@ -130,6 +181,82 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as ResourceRequestRow[];
+    },
+  });
+
+  const allocationsQuery = useQuery({
+    queryKey: ["profesor-course-allocations", { courseId }],
+    enabled: profesorCheckQuery.data?.isProfesor === true && Number.isFinite(courseId) && courseId > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_resource_allocations")
+        .select("course_id,resource_type,professor_bonus_remaining,professor_bonus_amount")
+        .eq("course_id", courseId);
+      if (error) throw error;
+      return (data ?? []) as CourseAllocationRow[];
+    },
+  });
+
+  const assignmentsQuery = useQuery({
+    queryKey: ["profesor-course-assignments", { courseId }],
+    enabled: profesorCheckQuery.data?.isProfesor === true && Number.isFinite(courseId) && courseId > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_homework_assignments")
+        .select("id,course_id,title,description,due_at,created_at")
+        .eq("course_id", courseId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as HomeworkAssignmentRow[];
+    },
+  });
+
+  const assignmentFilesQuery = useQuery({
+    queryKey: ["profesor-course-assignment-files", { courseId }],
+    enabled: profesorCheckQuery.data?.isProfesor === true && Number.isFinite(courseId) && courseId > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_homework_assignment_files")
+        .select("id,assignment_id,title,url,created_at")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as HomeworkAssignmentFileRow[];
+    },
+  });
+
+  const submissionsQuery = useQuery({
+    queryKey: ["profesor-course-submissions-v2", { courseId, assignmentId: selectedAssignmentId }],
+    enabled:
+      profesorCheckQuery.data?.isProfesor === true &&
+      Number.isFinite(courseId) &&
+      courseId > 0 &&
+      typeof selectedAssignmentId === "number" &&
+      selectedAssignmentId > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_homework_submissions_v2")
+        .select("id,assignment_id,course_id,student_id,link_url,created_at,app_users(full_name,email)")
+        .eq("course_id", courseId)
+        .eq("assignment_id", selectedAssignmentId as number)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as HomeworkSubmissionRow[];
+    },
+  });
+
+  const submissionFilesQuery = useQuery({
+    queryKey: ["profesor-course-submission-files", { courseId, assignmentId: selectedAssignmentId }],
+    enabled: submissionsQuery.isSuccess && (submissionsQuery.data ?? []).length > 0,
+    queryFn: async () => {
+      const ids = (submissionsQuery.data ?? []).map((s) => s.id);
+      if (ids.length === 0) return [] as HomeworkSubmissionFileRow[];
+      const { data, error } = await supabase
+        .from("course_homework_submission_files")
+        .select("id,submission_id,title,url,created_at")
+        .in("submission_id", ids)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as HomeworkSubmissionFileRow[];
     },
   });
 
@@ -225,6 +352,49 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
   });
 
+  const createAssignmentMutation = useMutation({
+    mutationFn: async () => {
+      const t = assignmentTitle.trim();
+      if (!t) throw new Error("Titlu invalid.");
+
+      const dueAtIso = assignmentDueAt ? new Date(assignmentDueAt).toISOString() : null;
+
+      const { data: newId, error: rpcErr } = await supabase.rpc("create_homework_assignment", {
+        _course_id: courseId,
+        _title: t,
+        _description: assignmentDescription.trim() || null,
+        _due_at: dueAtIso,
+      });
+      if (rpcErr) throw rpcErr;
+
+      const assignmentId = Number(newId);
+      if (!Number.isFinite(assignmentId) || assignmentId <= 0) throw new Error("Nu s-a putut crea tema.");
+
+      if (assignmentFiles.length) {
+        const rows: Array<{ assignment_id: number; title: string | null; url: string }> = [];
+        for (const file of assignmentFiles) {
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const path = `homework/course-${courseId}/assignment-${assignmentId}/teacher/${Date.now()}-${safeName}`;
+          const uploadRes = await supabase.storage.from("course-materials").upload(path, file, { upsert: false, contentType: file.type });
+          if (uploadRes.error) throw uploadRes.error;
+          const publicUrl = supabase.storage.from("course-materials").getPublicUrl(path).data.publicUrl;
+          rows.push({ assignment_id: assignmentId, title: file.name, url: publicUrl });
+        }
+        const { error: insErr } = await supabase.from("course_homework_assignment_files").insert(rows);
+        if (insErr) throw insErr;
+      }
+    },
+    onSuccess: async () => {
+      toast.success("Tema creata.");
+      setAssignmentTitle("");
+      setAssignmentDescription("");
+      setAssignmentDueAt("");
+      setAssignmentFiles([]);
+      await Promise.all([assignmentsQuery.refetch(), assignmentFilesQuery.refetch()]);
+    },
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
+  });
+
   const course = courseQuery.data;
   const materials = materialsQuery.data ?? [];
   const requests = requestsQuery.data ?? [];
@@ -240,8 +410,44 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
   const materialsTotal = filteredMaterials.length;
   const materialsPaged = filteredMaterials.slice((materialsPage - 1) * pageSize, materialsPage * pageSize);
 
+  const assignments = assignmentsQuery.data ?? [];
+  const filteredAssignments = useMemo(() => {
+    const q = assignmentsSearch.trim().toLowerCase();
+    if (!q) return assignments;
+    return assignments.filter((a) => `${a.title ?? ""} ${a.description ?? ""}`.toLowerCase().includes(q));
+  }, [assignments, assignmentsSearch]);
+  const assignmentsTotal = filteredAssignments.length;
+  const assignmentsPaged = filteredAssignments.slice((assignmentsPage - 1) * pageSize, assignmentsPage * pageSize);
+  const assignmentFilesById = useMemo(() => {
+    const map = new Map<number, HomeworkAssignmentFileRow[]>();
+    for (const f of assignmentFilesQuery.data ?? []) {
+      const list = map.get(f.assignment_id) ?? [];
+      list.push(f);
+      map.set(f.assignment_id, list);
+    }
+    return map;
+  }, [assignmentFilesQuery.data]);
+
+  const submissionFilesBySubmissionId = useMemo(() => {
+    const map = new Map<number, HomeworkSubmissionFileRow[]>();
+    for (const f of submissionFilesQuery.data ?? []) {
+      const list = map.get(f.submission_id) ?? [];
+      list.push(f);
+      map.set(f.submission_id, list);
+    }
+    return map;
+  }, [submissionFilesQuery.data]);
+
   const requestsTotal = requests.length;
   const requestsPaged = requests.slice((requestsPage - 1) * pageSize, requestsPage * pageSize);
+
+  const bonusRemainingByType = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of allocationsQuery.data ?? []) {
+      map.set(a.resource_type, a.professor_bonus_remaining ?? 0);
+    }
+    return map;
+  }, [allocationsQuery.data]);
 
   if (profesorCheckQuery.isLoading) {
     return (
@@ -288,6 +494,8 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
     }
   }
 
+  // submisii au pagina separata ("Vezi"), fara preview inline aici
+
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-8 md:px-6">
       <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -305,10 +513,11 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
         <aside className="lg:sticky lg:top-20">
           <section className="rounded-lg border border-border/70 bg-card p-4 shadow-2xs">
             <div className="text-sm font-semibold tracking-tight text-foreground">Gestionare</div>
-            <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-muted/10 p-1">
+            <div className="mt-3 grid grid-cols-3 gap-2 rounded-md bg-muted/10 p-1">
               {(
                 [
                   ["materials", "Materiale"],
+                  ["homework", "Teme"],
                   ["requests", "Cereri"],
                 ] as const
               ).map(([k, label]) => (
@@ -489,6 +698,267 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                 )}
               </div>
             </>
+          ) : view === "homework" ? (
+            <>
+              <div className="text-sm font-semibold tracking-tight text-foreground">Teme</div>
+              <p className="mt-1 text-xs text-muted-foreground">Creezi o temă (cerință + deadline) și atașezi fișiere.</p>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="md:col-span-1">
+                  <Label className="text-xs" htmlFor="a-title">
+                    Titlu
+                  </Label>
+                  <Input id="a-title" value={assignmentTitle} onChange={(e) => setAssignmentTitle(e.target.value)} placeholder="Tema 1" />
+                </div>
+                <div className="md:col-span-1">
+                  <Label className="text-xs" htmlFor="a-due">
+                    Deadline (optional)
+                  </Label>
+                  <Input
+                    id="a-due"
+                    type="datetime-local"
+                    value={assignmentDueAt}
+                    onChange={(e) => setAssignmentDueAt(e.target.value)}
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <Label className="text-xs" htmlFor="a-desc">
+                    Descriere (optional)
+                  </Label>
+                  <Textarea id="a-desc" value={assignmentDescription} onChange={(e) => setAssignmentDescription(e.target.value)} rows={4} />
+                </div>
+                <div className="md:col-span-3">
+                  <Label className="text-xs">Fișiere (optional)</Label>
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const list = Array.from(e.dataTransfer.files ?? []).filter((f) => f && f.size > 0);
+                      setAssignmentFiles((prev) => mergeFiles(prev, list));
+                    }}
+                    className="mt-1 rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground"
+                  >
+                    Trage aici fișierele sau folosește selectorul.
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <input
+                        type="file"
+                        multiple
+                        onChange={(e) => {
+                          const list = Array.from(e.target.files ?? []);
+                          setAssignmentFiles((prev) => mergeFiles(prev, list));
+                          e.currentTarget.value = "";
+                        }}
+                        className="w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                      />
+                      <Button type="button" variant="outline" size="sm" onClick={() => setAssignmentFiles([])} disabled={assignmentFiles.length === 0}>
+                        Golește
+                      </Button>
+                    </div>
+                    {assignmentFiles.length ? (
+                      <div className="mt-3">
+                        <div className="text-[11px] text-muted-foreground">
+                          Fișiere selectate: <span className="font-mono text-foreground">{assignmentFiles.length}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {assignmentFiles.slice(0, 12).map((f) => (
+                            <button
+                              key={`${f.name}__${f.size}__${f.lastModified}`}
+                              type="button"
+                              onClick={() => setAssignmentFiles((prev) => prev.filter((x) => x !== f))}
+                              className="inline-flex items-center gap-1 rounded-md bg-muted/20 px-2 py-1 text-[11px] text-foreground transition hover:bg-muted/30"
+                              title="Click pentru a scoate fișierul din listă"
+                            >
+                              <span className="max-w-[220px] truncate">{f.name}</span>
+                              <span className="text-muted-foreground">×</span>
+                            </button>
+                          ))}
+                          {assignmentFiles.length > 12 ? (
+                            <div className="px-2 py-1 text-[11px] text-muted-foreground">+{assignmentFiles.length - 12}…</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="md:col-span-3 flex justify-end">
+                  <Button type="button" disabled={createAssignmentMutation.isPending} onClick={() => createAssignmentMutation.mutate()}>
+                    Creează tema
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                {assignmentsQuery.isLoading ? (
+                  <div className="text-sm text-muted-foreground">Se incarca...</div>
+                ) : assignmentsTotal === 0 ? (
+                  <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista teme.</div>
+                ) : (
+                  <>
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <div className="space-y-1">
+                        <Label htmlFor="a-search" className="text-xs">
+                          Cauta
+                        </Label>
+                        <Input
+                          id="a-search"
+                          value={assignmentsSearch}
+                          onChange={(e) => {
+                            setAssignmentsSearch(e.target.value);
+                            setAssignmentsPage(1);
+                          }}
+                          placeholder="Titlu / descriere..."
+                        />
+                      </div>
+                      <div className="sm:pb-[2px]">
+                        <Pagination
+                          variant="compact"
+                          page={assignmentsPage}
+                          pageSize={pageSize}
+                          totalItems={assignmentsTotal}
+                          onPageChange={setAssignmentsPage}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/10 divide-y divide-border/40">
+                      {assignmentsPaged.map((a) => {
+                        const files = assignmentFilesById.get(a.id) ?? [];
+                        const count = files.length;
+                        const labels = files
+                          .map((f) => f.title?.trim() || "fisier")
+                          .filter(Boolean)
+                          .slice(0, 3);
+                        return (
+                          <div
+                            key={a.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              setSelectedAssignmentId(a.id);
+                              setTimeout(() => document.getElementById("hw-submissions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setSelectedAssignmentId(a.id);
+                                setTimeout(() => document.getElementById("hw-submissions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                              }
+                            }}
+                            className={[
+                              "w-full px-4 py-3 text-left transition hover:bg-muted/20 cursor-pointer outline-none focus:ring-2 focus:ring-ring/40",
+                              selectedAssignmentId === a.id ? "bg-muted/20" : "",
+                            ].join(" ")}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-foreground">{a.title}</div>
+                                {a.description ? <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{a.description}</div> : null}
+                                <div className="mt-2 text-[11px] text-muted-foreground">
+                                  creat: {new Date(a.created_at).toLocaleString()}
+                                  {a.due_at ? ` · deadline: ${new Date(a.due_at).toLocaleString()}` : ""}
+                                  {` · fișiere: ${count}`}
+                                </div>
+                                {count ? (
+                                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                    {labels.map((name, idx) => (
+                                      <span key={`${a.id}-${idx}`} className="rounded-md bg-muted/20 px-2 py-1">
+                                        {name}
+                                      </span>
+                                    ))}
+                                    {count > labels.length ? (
+                                      <span className="rounded-md bg-muted/20 px-2 py-1">+{count - labels.length}</span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="shrink-0 flex flex-col items-end gap-2">
+                                <div className="text-xs text-muted-foreground font-mono">#{a.id}</div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.open(`/cursuri/${courseId}/teme/${a.id}`, "_blank", "noopener,noreferrer");
+                                  }}
+                                >
+                                  Deschide
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div id="hw-submissions" className="mt-6 scroll-mt-24">
+                      <div className="flex items-end justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold tracking-tight text-foreground">Submisii</div>
+                          <p className="mt-1 text-xs text-muted-foreground">Selectează o temă din listă ca să vezi ce au trimis studenții.</p>
+                        </div>
+                        {selectedAssignmentId ? (
+                          <div className="text-xs text-muted-foreground">
+                            Tema: <span className="font-mono text-foreground">#{selectedAssignmentId}</span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-3">
+                        {!selectedAssignmentId ? (
+                          <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nicio temă selectată.</div>
+                        ) : submissionsQuery.isLoading ? (
+                          <div className="text-sm text-muted-foreground">Se incarca...</div>
+                        ) : submissionsQuery.isError ? (
+                          <div className="rounded-md bg-destructive/5 p-4 text-sm text-destructive">
+                            Eroare: <span className="font-mono text-xs">{getErrorMessage(submissionsQuery.error)}</span>
+                          </div>
+                        ) : (submissionsQuery.data ?? []).length === 0 ? (
+                          <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista submisii inca.</div>
+                        ) : (
+                          <div className="overflow-hidden rounded-md border border-border/60 bg-muted/10 divide-y divide-border/40">
+                            {(submissionsQuery.data ?? []).map((s) => {
+                              const u = s.app_users?.[0] ?? null;
+                              const studentLabel = u?.full_name?.trim() || u?.email || "Student";
+                              const fileCount = submissionFilesBySubmissionId.get(s.id)?.length ?? 0;
+                              return (
+                                <div key={s.id} className="px-4 py-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className="truncate text-sm font-medium text-foreground">{studentLabel}</div>
+                                      <div className="mt-1 text-[11px] text-muted-foreground">
+                                        {new Date(s.created_at).toLocaleString()} · fișiere: {fileCount}
+                                      </div>
+                                    </div>
+                                    <div className="shrink-0 flex flex-col items-end gap-2">
+                                      <div className="text-xs text-muted-foreground font-mono">#{s.id}</div>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() =>
+                                          window.open(
+                                            `/profesor/cursuri/${courseId}/teme/${selectedAssignmentId}/submisii/${s.id}`,
+                                            "_blank",
+                                            "noopener,noreferrer",
+                                          )
+                                        }
+                                      >
+                                        Vezi
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
           ) : (
             <>
               <div className="flex items-end justify-between gap-3">
@@ -517,6 +987,7 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                           <TableHead>ID</TableHead>
                           <TableHead>Tip</TableHead>
                           <TableHead className="text-right">Cantitate</TableHead>
+                        <TableHead className="text-center">In bonus 10%</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead className="text-right">Actiuni</TableHead>
                         </TableRow>
@@ -524,15 +995,22 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                       <TableBody>
                         {requestsPaged.map((r) => (
                         <TableRow key={r.id}>
+                          {(() => {
+                            const remaining = bonusRemainingByType.get(r.resource_type) ?? 0;
+                            const canApproveFromBonus = r.status === "pending" && remaining >= r.requested_amount;
+                            const label = canApproveFromBonus ? "Da" : "Nu";
+                            return (
+                              <>
                           <TableCell className="font-mono text-xs text-muted-foreground">#{r.id}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">{r.resource_type}</TableCell>
                           <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{r.requested_amount}</TableCell>
+                          <TableCell className="text-center text-xs text-muted-foreground">{label}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">{r.status}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
                               <Button
                                 type="button"
-                                disabled={approveRequestMutation.isPending}
+                                disabled={approveRequestMutation.isPending || !canApproveFromBonus}
                                 onClick={() => approveRequestMutation.mutate(r.id)}
                               >
                                 Aproba
@@ -540,7 +1018,7 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                               <Button
                                 type="button"
                                 variant="outline"
-                                disabled={escalateRequestMutation.isPending}
+                                disabled={escalateRequestMutation.isPending || r.status !== "pending"}
                                 onClick={() => escalateRequestMutation.mutate(r.id)}
                               >
                                 Trimite la admin
@@ -555,6 +1033,9 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                               </Button>
                             </div>
                           </TableCell>
+                              </>
+                            );
+                          })()}
                         </TableRow>
                       ))}
                       </TableBody>

@@ -180,6 +180,29 @@ using (
   or public.is_admin(auth.uid())
 );
 
+drop policy if exists "app_users_select_teacher_for_course_students" on public.app_users;
+create policy "app_users_select_teacher_for_course_students"
+on public.app_users
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1
+    from public.courses c
+    join public.course_enrollments e on e.course_id = c.id
+    where c.teacher_id = auth.uid()
+      and e.student_id = public.app_users.id
+  )
+  or exists (
+    select 1
+    from public.courses c
+    join public.course_homework_submissions_v2 s on s.course_id = c.id
+    where c.teacher_id = auth.uid()
+      and s.student_id = public.app_users.id
+  )
+);
+
 drop policy if exists "app_users_update_self_or_admin" on public.app_users;
 create policy "app_users_update_self_or_admin"
 on public.app_users
@@ -1032,6 +1055,55 @@ create table if not exists public.course_homework_submissions (
 create index if not exists course_homework_course_idx on public.course_homework_submissions(course_id);
 create index if not exists course_homework_student_idx on public.course_homework_submissions(student_id);
 
+-- ============================================================
+-- Homework v2: assignments created by teacher + student submissions (multiple files)
+-- ============================================================
+
+create table if not exists public.course_homework_assignments (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  title text not null,
+  description text,
+  due_at timestamptz,
+  created_by uuid not null references public.app_users(id) on delete restrict,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists course_homework_assignments_course_idx on public.course_homework_assignments(course_id);
+
+create table if not exists public.course_homework_assignment_files (
+  id bigserial primary key,
+  assignment_id bigint not null references public.course_homework_assignments(id) on delete cascade,
+  title text,
+  url text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists course_homework_assignment_files_assignment_idx on public.course_homework_assignment_files(assignment_id);
+
+create table if not exists public.course_homework_submissions_v2 (
+  id bigserial primary key,
+  assignment_id bigint not null references public.course_homework_assignments(id) on delete cascade,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  link_url text,
+  created_at timestamptz not null default now(),
+  unique (assignment_id, student_id)
+);
+
+create index if not exists course_homework_submissions_v2_course_idx on public.course_homework_submissions_v2(course_id);
+create index if not exists course_homework_submissions_v2_student_idx on public.course_homework_submissions_v2(student_id);
+
+create table if not exists public.course_homework_submission_files (
+  id bigserial primary key,
+  submission_id bigint not null references public.course_homework_submissions_v2(id) on delete cascade,
+  title text,
+  url text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists course_homework_submission_files_submission_idx on public.course_homework_submission_files(submission_id);
+
 -- Token consumption simulation activities
 create table if not exists public.course_token_activities (
   id bigserial primary key,
@@ -1338,6 +1410,87 @@ begin
 
   insert into public.course_homework_submissions (course_id, student_id, title, file_url)
   values (_course_id, auth.uid(), trim(_title), trim(_file_url));
+end;
+$$;
+
+-- Teacher/admin RPC: create homework assignment (v2)
+create or replace function public.create_homework_assignment(
+  _course_id bigint,
+  _title text,
+  _description text default null,
+  _due_at timestamptz default null
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_teacher_id uuid;
+  v_id bigint;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  select c.teacher_id into v_teacher_id
+  from public.courses c
+  where c.id = _course_id;
+
+  if v_teacher_id is null then
+    raise exception 'Curs inexistent.';
+  end if;
+
+  if not (public.is_admin(auth.uid()) or v_teacher_id = auth.uid()) then
+    raise exception 'Doar profesorul cursului sau admin poate crea teme.';
+  end if;
+
+  if _title is null or length(trim(_title)) = 0 then
+    raise exception 'Titlu invalid.';
+  end if;
+
+  insert into public.course_homework_assignments (course_id, title, description, due_at, created_by)
+  values (_course_id, trim(_title), nullif(trim(_description), ''), _due_at, auth.uid())
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+-- Student RPC: submit homework for assignment (v2); creates/updates single submission per assignment
+create or replace function public.submit_homework_assignment(
+  _assignment_id bigint,
+  _link_url text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_id bigint;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  select a.course_id into v_course_id
+  from public.course_homework_assignments a
+  where a.id = _assignment_id;
+
+  if v_course_id is null then
+    raise exception 'Tema inexistenta.';
+  end if;
+
+  if not public.is_enrolled_in_course(v_course_id, auth.uid()) then
+    raise exception 'Nu esti inrolat la acest curs.';
+  end if;
+
+  insert into public.course_homework_submissions_v2 (assignment_id, course_id, student_id, link_url)
+  values (_assignment_id, v_course_id, auth.uid(), nullif(trim(_link_url), ''))
+  on conflict (assignment_id, student_id) do update
+  set link_url = excluded.link_url,
+      created_at = now();
 end;
 $$;
 
@@ -1822,6 +1975,12 @@ grant execute on function public.admin_approve_escalated_course_resource_request
 revoke all on function public.submit_homework(bigint, text, text) from public;
 grant execute on function public.submit_homework(bigint, text, text) to authenticated;
 
+revoke all on function public.create_homework_assignment(bigint, text, text, timestamptz) from public;
+grant execute on function public.create_homework_assignment(bigint, text, text, timestamptz) to authenticated;
+
+revoke all on function public.submit_homework_assignment(bigint, text) from public;
+grant execute on function public.submit_homework_assignment(bigint, text) to authenticated;
+
 revoke all on function public.simulate_token_usage(bigint, integer, text) from public;
 grant execute on function public.simulate_token_usage(bigint, integer, text) to authenticated;
 
@@ -2151,6 +2310,186 @@ to authenticated
 with check (
   student_id = auth.uid()
   and public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+-- homework v2: assignments + submissions
+alter table public.course_homework_assignments enable row level security;
+alter table public.course_homework_assignment_files enable row level security;
+alter table public.course_homework_submissions_v2 enable row level security;
+alter table public.course_homework_submission_files enable row level security;
+
+-- assignments: enrolled students can see; teacher/admin can see; only teacher/admin can insert/update/delete
+drop policy if exists "course_hw_assignments_select_visible" on public.course_homework_assignments;
+create policy "course_hw_assignments_select_visible"
+on public.course_homework_assignments
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
+  or public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+drop policy if exists "course_hw_assignments_insert_teacher_admin" on public.course_homework_assignments;
+create policy "course_hw_assignments_insert_teacher_admin"
+on public.course_homework_assignments
+for insert
+to authenticated
+with check (
+  public.is_admin(auth.uid())
+  or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
+);
+
+drop policy if exists "course_hw_assignments_update_teacher_admin" on public.course_homework_assignments;
+create policy "course_hw_assignments_update_teacher_admin"
+on public.course_homework_assignments
+for update
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
+)
+with check (
+  public.is_admin(auth.uid())
+  or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
+);
+
+drop policy if exists "course_hw_assignments_delete_teacher_admin" on public.course_homework_assignments;
+create policy "course_hw_assignments_delete_teacher_admin"
+on public.course_homework_assignments
+for delete
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
+);
+
+-- assignment files: visible if assignment visible; only teacher/admin can manage
+drop policy if exists "course_hw_assignment_files_select_visible" on public.course_homework_assignment_files;
+create policy "course_hw_assignment_files_select_visible"
+on public.course_homework_assignment_files
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.course_homework_assignments a
+    where a.id = assignment_id
+      and (
+        public.is_admin(auth.uid())
+        or exists (select 1 from public.courses c where c.id = a.course_id and c.teacher_id = auth.uid())
+        or public.is_enrolled_in_course(a.course_id, auth.uid())
+      )
+  )
+);
+
+drop policy if exists "course_hw_assignment_files_insert_teacher_admin" on public.course_homework_assignment_files;
+create policy "course_hw_assignment_files_insert_teacher_admin"
+on public.course_homework_assignment_files
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.course_homework_assignments a
+    where a.id = assignment_id
+      and (
+        public.is_admin(auth.uid())
+        or exists (select 1 from public.courses c where c.id = a.course_id and c.teacher_id = auth.uid())
+      )
+  )
+);
+
+drop policy if exists "course_hw_assignment_files_delete_teacher_admin" on public.course_homework_assignment_files;
+create policy "course_hw_assignment_files_delete_teacher_admin"
+on public.course_homework_assignment_files
+for delete
+to authenticated
+using (
+  exists (
+    select 1
+    from public.course_homework_assignments a
+    where a.id = assignment_id
+      and (
+        public.is_admin(auth.uid())
+        or exists (select 1 from public.courses c where c.id = a.course_id and c.teacher_id = auth.uid())
+      )
+  )
+);
+
+-- submissions v2: student sees own; teacher/admin sees for their course; students can insert for enrolled course
+drop policy if exists "course_hw_submissions_v2_select_visible" on public.course_homework_submissions_v2;
+create policy "course_hw_submissions_v2_select_visible"
+on public.course_homework_submissions_v2
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+  or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
+);
+
+drop policy if exists "course_hw_submissions_v2_insert_student" on public.course_homework_submissions_v2;
+create policy "course_hw_submissions_v2_insert_student"
+on public.course_homework_submissions_v2
+for insert
+to authenticated
+with check (
+  student_id = auth.uid()
+  and public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+drop policy if exists "course_hw_submissions_v2_update_student" on public.course_homework_submissions_v2;
+create policy "course_hw_submissions_v2_update_student"
+on public.course_homework_submissions_v2
+for update
+to authenticated
+using (student_id = auth.uid())
+with check (student_id = auth.uid());
+
+-- submission files: visible if submission visible; only owner student can insert/delete
+drop policy if exists "course_hw_submission_files_select_visible" on public.course_homework_submission_files;
+create policy "course_hw_submission_files_select_visible"
+on public.course_homework_submission_files
+for select
+to authenticated
+using (
+  exists (
+    select 1
+    from public.course_homework_submissions_v2 s
+    where s.id = submission_id
+      and (
+        s.student_id = auth.uid()
+        or public.is_admin(auth.uid())
+        or exists (select 1 from public.courses c where c.id = s.course_id and c.teacher_id = auth.uid())
+      )
+  )
+);
+
+drop policy if exists "course_hw_submission_files_insert_owner" on public.course_homework_submission_files;
+create policy "course_hw_submission_files_insert_owner"
+on public.course_homework_submission_files
+for insert
+to authenticated
+with check (
+  exists (
+    select 1 from public.course_homework_submissions_v2 s
+    where s.id = submission_id
+      and s.student_id = auth.uid()
+  )
+);
+
+drop policy if exists "course_hw_submission_files_delete_owner" on public.course_homework_submission_files;
+create policy "course_hw_submission_files_delete_owner"
+on public.course_homework_submission_files
+for delete
+to authenticated
+using (
+  exists (
+    select 1 from public.course_homework_submissions_v2 s
+    where s.id = submission_id
+      and s.student_id = auth.uid()
+  )
 );
 
 -- token activities: student sees own; teacher/admin sees for their courses

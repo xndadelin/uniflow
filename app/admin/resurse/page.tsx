@@ -437,7 +437,6 @@ function AdminResurseInner() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold tracking-tight text-foreground">Context</div>
-                <div className="mt-1 text-xs text-muted-foreground">Selectezi cursul și lucrezi pe o singură zonă.</div>
               </div>
               <Link href="/admin" className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground">
                 Dashboard
@@ -448,7 +447,6 @@ function AdminResurseInner() {
               <div className="flex items-end justify-between gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">Cursuri</label>
-                  <div className="mt-1 text-xs text-muted-foreground">Click pe un curs ca să-l selectezi.</div>
                 </div>
               </div>
 

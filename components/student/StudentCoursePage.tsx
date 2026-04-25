@@ -281,6 +281,37 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
     },
   });
 
+  const course = courseQuery.data;
+  const materials = materialsQuery.data ?? [];
+  const resources = resourcesQuery.data ?? [];
+  const byType = new Map(resources.map((r) => [r.resource_type, r]));
+  const tokens = byType.get("tokens");
+  const vps = byType.get("vps_subscription");
+
+  const remainingTokens = Math.max(0, (tokens?.granted_amount ?? 0) - (tokens?.consumed_amount ?? 0));
+  const remainingVps = Math.max(0, (vps?.granted_amount ?? 0) - (vps?.consumed_amount ?? 0));
+
+  const filteredMaterials = useMemo(() => {
+    const q = materialsSearch.trim().toLowerCase();
+    if (!q) return materials;
+    return materials.filter((m) => {
+      const hay = `${m.title ?? ""} ${m.description ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [materials, materialsSearch]);
+
+  const materialsTotal = filteredMaterials.length;
+  const materialsPaged = filteredMaterials.slice((materialsPage - 1) * pageSize, materialsPage * pageSize);
+
+  const homeworkAll = homeworkQuery.data ?? [];
+  const filteredHomework = useMemo(() => {
+    const q = homeworkSearch.trim().toLowerCase();
+    if (!q) return homeworkAll;
+    return homeworkAll.filter((h) => (h.title ?? "").toLowerCase().includes(q));
+  }, [homeworkAll, homeworkSearch]);
+  const homeworkTotal = filteredHomework.length;
+  const homeworkPaged = filteredHomework.slice((homeworkPage - 1) * pageSize, homeworkPage * pageSize);
+
   if (enrollmentQuery.isLoading) {
     return (
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
@@ -315,37 +346,6 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
       </main>
     );
   }
-
-  const course = courseQuery.data;
-  const materials = materialsQuery.data ?? [];
-  const resources = resourcesQuery.data ?? [];
-  const byType = new Map(resources.map((r) => [r.resource_type, r]));
-  const tokens = byType.get("tokens");
-  const vps = byType.get("vps_subscription");
-
-  const remainingTokens = Math.max(0, (tokens?.granted_amount ?? 0) - (tokens?.consumed_amount ?? 0));
-  const remainingVps = Math.max(0, (vps?.granted_amount ?? 0) - (vps?.consumed_amount ?? 0));
-
-  const filteredMaterials = useMemo(() => {
-    const q = materialsSearch.trim().toLowerCase();
-    if (!q) return materials;
-    return materials.filter((m) => {
-      const hay = `${m.title ?? ""} ${m.description ?? ""}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [materials, materialsSearch]);
-
-  const materialsTotal = filteredMaterials.length;
-  const materialsPaged = filteredMaterials.slice((materialsPage - 1) * pageSize, materialsPage * pageSize);
-
-  const homeworkAll = homeworkQuery.data ?? [];
-  const filteredHomework = useMemo(() => {
-    const q = homeworkSearch.trim().toLowerCase();
-    if (!q) return homeworkAll;
-    return homeworkAll.filter((h) => (h.title ?? "").toLowerCase().includes(q));
-  }, [homeworkAll, homeworkSearch]);
-  const homeworkTotal = filteredHomework.length;
-  const homeworkPaged = filteredHomework.slice((homeworkPage - 1) * pageSize, homeworkPage * pageSize);
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
@@ -535,67 +535,10 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
                 <CardTitle className="text-base font-semibold tracking-tight">Tema</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground">Trimite un link catre tema (Drive/GitHub/PDF public).</p>
-                <div className="mt-4 grid gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="hw-title">Titlu</Label>
-                    <Input id="hw-title" value={homeworkTitle} onChange={(e) => setHomeworkTitle(e.target.value)} placeholder="Tema 1" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="hw-url">URL</Label>
-                    <Input id="hw-url" value={homeworkUrl} onChange={(e) => setHomeworkUrl(e.target.value)} placeholder="https://..." />
-                  </div>
-                  <div className="flex justify-end">
-                    <Button onClick={() => submitHomeworkMutation.mutate()} disabled={submitHomeworkMutation.isPending}>
-                      Incarca tema
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  {homeworkQuery.isLoading ? (
-                    <div className="text-sm text-muted-foreground">Se incarca...</div>
-                  ) : homeworkQuery.isError ? (
-                    <div className="text-sm text-destructive">Eroare: {getErrorMessage(homeworkQuery.error)}</div>
-                  ) : homeworkTotal === 0 ? (
-                    <div className="text-sm text-muted-foreground">Nu ai teme incarcate inca.</div>
-                  ) : (
-                    <>
-                      <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-                        <div className="space-y-1">
-                          <Label htmlFor="hw-search">Cauta</Label>
-                          <Input
-                            id="hw-search"
-                            value={homeworkSearch}
-                            onChange={(e) => {
-                              setHomeworkSearch(e.target.value);
-                              setHomeworkPage(1);
-                            }}
-                            placeholder="Titlu tema..."
-                          />
-                        </div>
-                        <div className="sm:pb-[2px]">
-                          <Pagination variant="compact" page={homeworkPage} pageSize={pageSize} totalItems={homeworkTotal} onPageChange={setHomeworkPage} />
-                        </div>
-                      </div>
-
-                      <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 divide-y divide-border/30">
-                        {homeworkPaged.map((h) => (
-                          <div key={h.id} className="flex items-start justify-between gap-3 px-4 py-3">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-medium">{h.title}</div>
-                              <div className="mt-2 text-[11px] text-muted-foreground">{new Date(h.submitted_at).toLocaleString()}</div>
-                            </div>
-                            <Button asChild size="sm" variant="outline">
-                              <a href={h.file_url} target="_blank" rel="noreferrer">
-                                Deschide
-                              </a>
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/cursuri/${courseId}/teme`}>Vezi temele</Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -605,50 +548,11 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
                 <CardTitle className="text-base font-semibold tracking-tight">Materiale</CardTitle>
               </CardHeader>
               <CardContent>
-                {materialsQuery.isLoading ? (
-                  <div className="text-sm text-muted-foreground">Se incarca...</div>
-                ) : materialsQuery.isError ? (
-                  <div className="text-sm text-destructive">Eroare: {getErrorMessage(materialsQuery.error)}</div>
-                ) : materialsTotal === 0 ? (
-                  <div className="text-sm text-muted-foreground">Nu exista materiale incarcate inca.</div>
-                ) : (
-                  <>
-                    <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-                      <div className="space-y-1">
-                        <Label htmlFor="mat-search">Cauta</Label>
-                        <Input
-                          id="mat-search"
-                          value={materialsSearch}
-                          onChange={(e) => {
-                            setMaterialsSearch(e.target.value);
-                            setMaterialsPage(1);
-                          }}
-                          placeholder="Titlu / descriere..."
-                        />
-                      </div>
-                      <div className="sm:pb-[2px]">
-                        <Pagination variant="compact" page={materialsPage} pageSize={pageSize} totalItems={materialsTotal} onPageChange={setMaterialsPage} />
-                      </div>
-                    </div>
-
-                    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 divide-y divide-border/30">
-                      {materialsPaged.map((m) => (
-                        <div key={m.id} className="flex items-start justify-between gap-3 px-4 py-3">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium">{m.title}</div>
-                            {m.description ? <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{m.description}</div> : null}
-                            <div className="mt-2 text-[11px] text-muted-foreground">{new Date(m.created_at).toLocaleString()}</div>
-                          </div>
-                          <Button asChild size="sm" variant="outline">
-                            <a href={m.url} target="_blank" rel="noreferrer">
-                              Deschide
-                            </a>
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/cursuri/${courseId}/materiale`}>Vezi materiale</Link>
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
