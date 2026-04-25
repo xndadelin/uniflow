@@ -18,6 +18,7 @@ export type AppTopNavProps = {
   isAuthenticated: boolean;
   isAdmin: boolean;
   isProfesor: boolean;
+  isAudit: boolean;
   onSignOut?: () => void;
 };
 
@@ -27,7 +28,7 @@ function initials(name: string) {
   return i.toUpperCase().slice(0, 2);
 }
 
-export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, onSignOut }: AppTopNavProps) {
+export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, isAudit, onSignOut }: AppTopNavProps) {
   async function signOut() {
     await fetch("/api/auth/signout", { method: "POST" });
     window.location.href = "/";
@@ -54,6 +55,11 @@ export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, o
               {isProfesor ? (
                 <Button asChild variant="outline" size="sm">
                   <Link href="/profesor/cursuri">Profesor</Link>
+                </Button>
+              ) : null}
+              {isAudit ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/audit">Audit</Link>
                 </Button>
               ) : null}
 

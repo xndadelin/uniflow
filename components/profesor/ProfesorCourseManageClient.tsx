@@ -71,7 +71,7 @@ type HomeworkSubmissionRow = {
   student_id: string;
   link_url: string | null;
   created_at: string;
-  app_users?: Array<{ full_name: string | null; email: string }> | null;
+  app_users?: { full_name: string | null; email: string } | Array<{ full_name: string | null; email: string }> | null;
 };
 
 type HomeworkSubmissionFileRow = {
@@ -918,7 +918,7 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                         ) : (
                           <div className="overflow-hidden rounded-md border border-border/60 bg-muted/10 divide-y divide-border/40">
                             {(submissionsQuery.data ?? []).map((s) => {
-                              const u = s.app_users?.[0] ?? null;
+                              const u = s.app_users ? (Array.isArray(s.app_users) ? s.app_users[0] : s.app_users) : null;
                               const studentLabel = u?.full_name?.trim() || u?.email || "Student";
                               const fileCount = submissionFilesBySubmissionId.get(s.id)?.length ?? 0;
                               return (

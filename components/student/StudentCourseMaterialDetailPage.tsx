@@ -120,7 +120,7 @@ export function StudentCourseMaterialDetailPage({ courseId, materialId }: { cour
             <CardContent>
               {canPreviewInline ? (
                 <div className="overflow-hidden rounded-md border border-border/60 bg-muted/10">
-                  <iframe title={m.title} src={m.url} className="h-[70vh] w-full" />
+                  <iframe title={m.title} src={m.url} className="h-[80vh] w-full md:h-[88vh]" />
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">

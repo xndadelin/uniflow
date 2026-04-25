@@ -334,6 +334,472 @@ as $$
   );
 $$;
 
+-- Helper: checks if a user has audit role
+create or replace function public.is_audit(_user_id uuid default auth.uid())
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.user_roles ur
+    join public.roles r on r.id = ur.role_id
+    where ur.user_id = _user_id
+      and r.name = 'audit'
+  );
+$$;
+
+-- ============================================================
+-- Audit logging (jurnalizare)
+-- ============================================================
+
+create table if not exists public.audit_logs (
+  id bigserial primary key,
+  created_at timestamptz not null default now(),
+  actor_id uuid,
+  action text not null,
+  entity_table text,
+  entity_id text,
+  course_id bigint,
+  message text,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create index if not exists audit_logs_created_at_idx on public.audit_logs(created_at desc);
+create index if not exists audit_logs_actor_idx on public.audit_logs(actor_id);
+create index if not exists audit_logs_course_idx on public.audit_logs(course_id);
+
+alter table public.audit_logs enable row level security;
+revoke all on public.audit_logs from anon, authenticated;
+grant select on public.audit_logs to authenticated;
+
+drop policy if exists "audit_logs_select_audit_or_admin" on public.audit_logs;
+create policy "audit_logs_select_audit_or_admin"
+on public.audit_logs
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or public.is_audit(auth.uid())
+);
+
+-- Only system functions/triggers should insert logs (no direct inserts from clients).
+
+create or replace function public.audit_log(
+  _action text,
+  _entity_table text default null,
+  _entity_id text default null,
+  _course_id bigint default null,
+  _message text default null,
+  _metadata jsonb default '{}'::jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.audit_logs (actor_id, action, entity_table, entity_id, course_id, message, metadata)
+  values (auth.uid(), _action, _entity_table, _entity_id, _course_id, _message, coalesce(_metadata, '{}'::jsonb));
+end;
+$$;
+
+create or replace function public.trg_audit_user_roles()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.audit_log(
+      'role_assigned',
+      'user_roles',
+      new.user_id::text || ':' || new.role_id::text,
+      null,
+      null,
+      jsonb_build_object('user_id', new.user_id, 'role_id', new.role_id, 'assigned_by', new.assigned_by)
+    );
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' then
+    perform public.audit_log(
+      'role_revoked',
+      'user_roles',
+      old.user_id::text || ':' || old.role_id::text,
+      null,
+      null,
+      jsonb_build_object('user_id', old.user_id, 'role_id', old.role_id)
+    );
+    return old;
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists audit_user_roles_ins on public.user_roles;
+create trigger audit_user_roles_ins
+after insert on public.user_roles
+for each row execute function public.trg_audit_user_roles();
+
+drop trigger if exists audit_user_roles_del on public.user_roles;
+create trigger audit_user_roles_del
+after delete on public.user_roles
+for each row execute function public.trg_audit_user_roles();
+
+create or replace function public.trg_audit_course_resource_requests()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_action text;
+begin
+  if tg_op = 'INSERT' then
+    v_action := 'resource_request_created';
+  elsif tg_op = 'UPDATE' then
+    if old.status is distinct from new.status then
+      v_action := 'resource_request_status_changed';
+    else
+      return new;
+    end if;
+  else
+    return coalesce(new, old);
+  end if;
+
+  perform public.audit_log(
+    v_action,
+    'course_resource_requests',
+    (coalesce(new.id, old.id))::text,
+    coalesce(new.course_id, old.course_id),
+    null,
+    jsonb_build_object(
+      'old_status', old.status,
+      'new_status', new.status,
+      'resource_type', coalesce(new.resource_type, old.resource_type),
+      'requested_amount', coalesce(new.requested_amount, old.requested_amount),
+      'student_id', coalesce(new.student_id, old.student_id)
+    )
+  );
+
+  return new;
+end;
+$$;
+
+drop trigger if exists audit_course_resource_requests_ins on public.course_resource_requests;
+create trigger audit_course_resource_requests_ins
+after insert on public.course_resource_requests
+for each row execute function public.trg_audit_course_resource_requests();
+
+drop trigger if exists audit_course_resource_requests_upd on public.course_resource_requests;
+create trigger audit_course_resource_requests_upd
+after update on public.course_resource_requests
+for each row execute function public.trg_audit_course_resource_requests();
+
+create or replace function public.trg_audit_course_materials()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.audit_log(
+      'course_material_created',
+      'course_materials',
+      new.id::text,
+      new.course_id,
+      new.title,
+      jsonb_build_object('url', new.url)
+    );
+    return new;
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists audit_course_materials_ins on public.course_materials;
+create trigger audit_course_materials_ins
+after insert on public.course_materials
+for each row execute function public.trg_audit_course_materials();
+
+create or replace function public.trg_audit_homework_assignments()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.audit_log(
+      'homework_assignment_created',
+      'course_homework_assignments',
+      new.id::text,
+      new.course_id,
+      new.title,
+      jsonb_build_object('due_at', new.due_at)
+    );
+    return new;
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists audit_course_homework_assignments_ins on public.course_homework_assignments;
+create trigger audit_course_homework_assignments_ins
+after insert on public.course_homework_assignments
+for each row execute function public.trg_audit_homework_assignments();
+
+create or replace function public.trg_audit_homework_submissions_v2()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_action text;
+begin
+  if tg_op = 'INSERT' then
+    v_action := 'homework_submitted';
+  elsif tg_op = 'UPDATE' then
+    v_action := 'homework_resubmitted';
+  else
+    return coalesce(new, old);
+  end if;
+
+  perform public.audit_log(
+    v_action,
+    'course_homework_submissions_v2',
+    (coalesce(new.id, old.id))::text,
+    coalesce(new.course_id, old.course_id),
+    null,
+    jsonb_build_object(
+      'assignment_id', coalesce(new.assignment_id, old.assignment_id),
+      'student_id', coalesce(new.student_id, old.student_id),
+      'link_url', coalesce(new.link_url, old.link_url)
+    )
+  );
+
+  return new;
+end;
+$$;
+
+drop trigger if exists audit_course_homework_submissions_v2_ins on public.course_homework_submissions_v2;
+create trigger audit_course_homework_submissions_v2_ins
+after insert on public.course_homework_submissions_v2
+for each row execute function public.trg_audit_homework_submissions_v2();
+
+drop trigger if exists audit_course_homework_submissions_v2_upd on public.course_homework_submissions_v2;
+create trigger audit_course_homework_submissions_v2_upd
+after update on public.course_homework_submissions_v2
+for each row execute function public.trg_audit_homework_submissions_v2();
+
+-- Generic audit trigger for broad coverage (INSERT/UPDATE/DELETE)
+create or replace function public.trg_audit_generic()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_entity_id text;
+  v_course_id bigint;
+  v_action text;
+  v_new jsonb;
+  v_old jsonb;
+  v_key text;
+  v_changed_keys text[];
+  v_changes jsonb := '{}'::jsonb;
+begin
+  v_action := lower(tg_table_name) || '_' || lower(tg_op);
+  v_new := case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) else null end;
+  v_old := case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) else null end;
+
+  -- Skip noisy UPDATEs that don't actually change anything (e.g. UPDATE ... SET col = col).
+  if tg_op = 'UPDATE' and v_new = v_old then
+    return new;
+  end if;
+
+  -- Compute changed fields for UPDATE to make diffs obvious in UI.
+  if tg_op = 'UPDATE' then
+    v_changed_keys := array[]::text[];
+    for v_key in
+      select key
+      from (
+        select jsonb_object_keys(coalesce(v_old, '{}'::jsonb)) as key
+        union
+        select jsonb_object_keys(coalesce(v_new, '{}'::jsonb)) as key
+      ) k
+    loop
+      if (v_old -> v_key) is distinct from (v_new -> v_key) then
+        v_changed_keys := array_append(v_changed_keys, v_key);
+        v_changes :=
+          v_changes ||
+          jsonb_build_object(
+            v_key,
+            jsonb_build_object('old', v_old -> v_key, 'new', v_new -> v_key)
+          );
+      end if;
+    end loop;
+  end if;
+
+  -- Best-effort entity id
+  v_entity_id := coalesce(
+    (v_new ->> 'id'),
+    (v_old ->> 'id'),
+    null
+  );
+
+  -- Best-effort course_id
+  v_course_id := nullif(coalesce((v_new ->> 'course_id'), (v_old ->> 'course_id')), '')::bigint;
+
+  perform public.audit_log(
+    v_action,
+    tg_table_name,
+    v_entity_id,
+    v_course_id,
+    null,
+    jsonb_build_object(
+      'op', tg_op,
+      'table', tg_table_name,
+      'old', v_old,
+      'new', v_new,
+      'changed_keys', coalesce(v_changed_keys, array[]::text[]),
+      'changes', v_changes
+    )
+  );
+
+  return coalesce(new, old);
+end;
+$$;
+
+-- Attach generic audit triggers to "everything" important.
+-- (We keep the specific triggers above; this ensures we don't miss actions.)
+drop trigger if exists audit_roles_all on public.roles;
+create trigger audit_roles_all
+after insert or update or delete on public.roles
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_app_users_all on public.app_users;
+create trigger audit_app_users_all
+after insert or update or delete on public.app_users
+for each row execute function public.trg_audit_generic();
+
+-- user_roles already has dedicated insert/delete logs; still log updates via generic
+drop trigger if exists audit_user_roles_upd_generic on public.user_roles;
+create trigger audit_user_roles_upd_generic
+after update on public.user_roles
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_resource_inventory_all on public.resource_inventory;
+create trigger audit_resource_inventory_all
+after insert or update or delete on public.resource_inventory
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_admin_activities_all on public.admin_activities;
+create trigger audit_admin_activities_all
+after insert or update or delete on public.admin_activities
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_activities_all on public.course_activities;
+create trigger audit_course_activities_all
+after insert or update or delete on public.course_activities
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_vps_credentials_all on public.vps_credentials;
+create trigger audit_vps_credentials_all
+after insert or update or delete on public.vps_credentials
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_email_outbox_all on public.email_outbox;
+create trigger audit_email_outbox_all
+after insert or update or delete on public.email_outbox
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_vps_email_validation_tokens_all on public.vps_email_validation_tokens;
+create trigger audit_vps_email_validation_tokens_all
+after insert or update or delete on public.vps_email_validation_tokens
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_courses_all on public.courses;
+create trigger audit_courses_all
+after insert or update or delete on public.courses
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_resource_requirements_all on public.course_resource_requirements;
+create trigger audit_course_resource_requirements_all
+after insert or update or delete on public.course_resource_requirements
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_enrollments_all on public.course_enrollments;
+create trigger audit_course_enrollments_all
+after insert or update or delete on public.course_enrollments
+for each row execute function public.trg_audit_generic();
+
+-- course_materials has dedicated insert log; still cover update/delete
+drop trigger if exists audit_course_materials_upd_del_generic on public.course_materials;
+create trigger audit_course_materials_upd_del_generic
+after update or delete on public.course_materials
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_student_resources_all on public.course_student_resources;
+create trigger audit_course_student_resources_all
+after insert or update or delete on public.course_student_resources
+for each row execute function public.trg_audit_generic();
+
+-- course_resource_requests has dedicated insert/update log; still cover delete
+drop trigger if exists audit_course_resource_requests_del_generic on public.course_resource_requests;
+create trigger audit_course_resource_requests_del_generic
+after delete on public.course_resource_requests
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_homework_submissions_all on public.course_homework_submissions;
+create trigger audit_course_homework_submissions_all
+after insert or update or delete on public.course_homework_submissions
+for each row execute function public.trg_audit_generic();
+
+-- course_homework_assignments has dedicated insert log; still cover update/delete
+drop trigger if exists audit_course_homework_assignments_upd_del_generic on public.course_homework_assignments;
+create trigger audit_course_homework_assignments_upd_del_generic
+after update or delete on public.course_homework_assignments
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_homework_assignment_files_all on public.course_homework_assignment_files;
+create trigger audit_course_homework_assignment_files_all
+after insert or update or delete on public.course_homework_assignment_files
+for each row execute function public.trg_audit_generic();
+
+-- course_homework_submissions_v2 has dedicated insert/update log; still cover delete
+drop trigger if exists audit_course_homework_submissions_v2_del_generic on public.course_homework_submissions_v2;
+create trigger audit_course_homework_submissions_v2_del_generic
+after delete on public.course_homework_submissions_v2
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_homework_submission_files_all on public.course_homework_submission_files;
+create trigger audit_course_homework_submission_files_all
+after insert or update or delete on public.course_homework_submission_files
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_token_activities_all on public.course_token_activities;
+create trigger audit_course_token_activities_all
+after insert or update or delete on public.course_token_activities
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_vps_validations_all on public.course_vps_validations;
+create trigger audit_course_vps_validations_all
+after insert or update or delete on public.course_vps_validations
+for each row execute function public.trg_audit_generic();
+
+drop trigger if exists audit_course_resource_allocations_all on public.course_resource_allocations;
+create trigger audit_course_resource_allocations_all
+after insert or update or delete on public.course_resource_allocations
+for each row execute function public.trg_audit_generic();
+
 -- Resource types used across the app
 do $$
 begin

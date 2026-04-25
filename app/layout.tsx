@@ -21,12 +21,13 @@ export default async function RootLayout({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [{ data: isAdmin }, { data: isProfesor }] = user
+  const [{ data: isAdmin }, { data: isProfesor }, { data: isAudit }] = user
     ? await Promise.all([
         supabase.rpc("is_admin", { _user_id: user.id }),
         supabase.rpc("is_profesor", { _user_id: user.id }),
+        supabase.rpc("is_audit", { _user_id: user.id }),
       ])
-    : [{ data: false }, { data: false }];
+    : [{ data: false }, { data: false }, { data: false }];
 
   const displayName =
     (user?.user_metadata?.full_name as string | undefined) ||
@@ -44,6 +45,7 @@ export default async function RootLayout({
             isAuthenticated={Boolean(user)}
             isAdmin={Boolean(isAdmin)}
             isProfesor={Boolean(isProfesor)}
+            isAudit={Boolean(isAudit)}
           />
           {children}
         </Providers>

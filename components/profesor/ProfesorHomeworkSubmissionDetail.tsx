@@ -14,7 +14,7 @@ type SubmissionRow = {
   student_id: string;
   link_url: string | null;
   created_at: string;
-  app_users?: Array<{ full_name: string | null; email: string }> | null;
+  app_users?: { full_name: string | null; email: string } | Array<{ full_name: string | null; email: string }> | null;
 };
 
 type SubmissionFileRow = {
@@ -114,7 +114,7 @@ export function ProfesorHomeworkSubmissionDetail({
   }
 
   const s = submissionQuery.data;
-  const u = s?.app_users?.[0] ?? null;
+  const u = s?.app_users ? (Array.isArray(s.app_users) ? s.app_users[0] : s.app_users) : null;
   const studentName = u?.full_name?.trim() || null;
   const studentEmail = u?.email?.trim() || null;
   const studentLabel = studentName || studentEmail || s?.student_id || "Student";
