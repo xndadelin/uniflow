@@ -63,6 +63,29 @@ function ceil10Percent(n: number) {
   return Math.ceil(n * 0.1);
 }
 
+function getErrorMessage(err: unknown) {
+  if (!err) return "Eroare necunoscuta.";
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && "message" in err && typeof (err as { message?: unknown }).message === "string") {
+    return (err as { message: string }).message;
+  }
+  return "Eroare la request.";
+}
+
+function mergeFiles(prev: File[], next: File[]) {
+  const key = (f: File) => `${f.name}__${f.size}__${f.lastModified}`;
+  const seen = new Set(prev.map(key));
+  const merged = [...prev];
+  for (const f of next) {
+    const k = key(f);
+    if (!seen.has(k)) {
+      seen.add(k);
+      merged.push(f);
+    }
+  }
+  return merged;
+}
+
 export default function ProfesorCursuriPage() {
   const supabase = useMemo(() => createClient(), []);
   const [title, setTitle] = useState("");
@@ -133,13 +156,13 @@ export default function ProfesorCursuriPage() {
         : { data: [] as ResourceRequestRow[], error: null };
       if (reqErr2) throw reqErr2;
 
-      const materialsByCourse = (materials ?? []).reduce<Record<number, CourseMaterialRow[]>>((acc, m) => {
-        acc[m.course_id] = [...(acc[m.course_id] ?? []), m];
+      const requestsByCourse = (requests ?? []).reduce<Record<number, ResourceRequestRow[]>>((acc, r) => {
+        acc[r.course_id] = [...(acc[r.course_id] ?? []), r];
         return acc;
       }, {});
 
-      const requestsByCourse = (requests ?? []).reduce<Record<number, ResourceRequestRow[]>>((acc, r) => {
-        acc[r.course_id] = [...(acc[r.course_id] ?? []), r];
+      const materialsByCourse = (materials ?? []).reduce<Record<number, CourseMaterialRow[]>>((acc, m) => {
+        acc[m.course_id] = [...(acc[m.course_id] ?? []), m];
         return acc;
       }, {});
 
@@ -148,7 +171,7 @@ export default function ProfesorCursuriPage() {
   });
 
   const [materialDraftByCourse, setMaterialDraftByCourse] = useState<Record<number, { title: string; url: string; description: string }>>({});
-  const [materialFileByCourse, setMaterialFileByCourse] = useState<Record<number, File | null>>({});
+  const [materialFilesByCourse, setMaterialFilesByCourse] = useState<Record<number, File[]>>({});
 
   const addMaterialMutation = useMutation({
     mutationFn: async ({
@@ -156,47 +179,70 @@ export default function ProfesorCursuriPage() {
       title,
       url,
       description,
-      file,
+      files,
     }: {
       courseId: number;
       title: string;
       url: string;
       description: string;
-      file: File | null;
+      files: File[];
     }) => {
       const trimmedTitle = title.trim();
-      if (!trimmedTitle) throw new Error("Titlu material invalid.");
       const trimmedUrl = url.trim();
-      if (!file && !trimmedUrl) throw new Error("Trebuie sa incarci un fisier sau sa pui un URL.");
+      const desc = description.trim() ? description.trim() : null;
+      const hasFiles = (files ?? []).length > 0;
 
-      let finalUrl = trimmedUrl;
-      if (file) {
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-        const path = `course-${courseId}/${Date.now()}-${safeName}`;
-        const uploadRes = await supabase.storage.from("course-materials").upload(path, file, { upsert: false, contentType: file.type });
-        if (uploadRes.error) {
-          throw new Error(
-            `Upload esuat: ${uploadRes.error.message}. Verifica daca exista bucket-ul "course-materials" (public) in Supabase Storage.`
-          );
+      if (!hasFiles && !trimmedUrl) throw new Error("Trebuie sa incarci cel putin un fisier sau sa pui un URL.");
+
+      const rowsToInsert: Array<{ course_id: number; teacher_id: string | null; title: string; description: string | null; url: string }> = [];
+
+      if (hasFiles) {
+        for (const file of files) {
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const path = `course-${courseId}/${Date.now()}-${safeName}`;
+          const uploadRes = await supabase.storage.from("course-materials").upload(path, file, { upsert: false, contentType: file.type });
+          if (uploadRes.error) {
+            const raw = JSON.stringify(uploadRes.error);
+            const msg = String(uploadRes.error.message ?? "Upload esuat.");
+            const hint =
+              msg.toLowerCase().includes("row-level security") || msg.toLowerCase().includes("permission")
+                ? ' Lipsesc policy-urile de INSERT pe `storage.objects` pentru bucket-ul "course-materials".'
+                : msg.toLowerCase().includes("bucket")
+                  ? ' Verifica daca bucket-ul "course-materials" exista in Supabase Storage.'
+                  : "";
+            throw new Error(`Upload esuat: ${msg}.${hint} Detalii: ${raw}`);
+          }
+          const publicUrl = supabase.storage.from("course-materials").getPublicUrl(path).data.publicUrl;
+          rowsToInsert.push({
+            course_id: courseId,
+            teacher_id: profesorCheckQuery.data?.userId ?? null,
+            title: trimmedTitle || file.name,
+            description: desc,
+            url: publicUrl,
+          });
         }
-        const publicUrl = supabase.storage.from("course-materials").getPublicUrl(path).data.publicUrl;
-        finalUrl = publicUrl;
       }
 
-      const { error } = await supabase.from("course_materials").insert({
-        course_id: courseId,
-        teacher_id: profesorCheckQuery.data?.userId,
-        title: trimmedTitle,
-        description: description.trim() ? description.trim() : null,
-        url: finalUrl,
-      });
+      if (trimmedUrl) {
+        rowsToInsert.push({
+          course_id: courseId,
+          teacher_id: profesorCheckQuery.data?.userId ?? null,
+          title: trimmedTitle || "Link",
+          description: desc,
+          url: trimmedUrl,
+        });
+      }
+
+      const { error } = await supabase.from("course_materials").insert(rowsToInsert);
       if (error) throw error;
     },
-    onSuccess: async () => {
-      toast.success("Material adaugat.");
+    onSuccess: async (_data, vars) => {
+      toast.success("Material(e) adaugat(e).");
+      setMaterialDraftByCourse((prev) => ({ ...prev, [vars.courseId]: { title: "", url: "", description: "" } }));
+      setMaterialFilesByCourse((prev) => ({ ...prev, [vars.courseId]: [] }));
       await coursesQuery.refetch();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
   });
 
   const approveRequestMutation = useMutation({
@@ -549,12 +595,12 @@ export default function ProfesorCursuriPage() {
 
       <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
         <h2 className="font-mono text-sm font-semibold text-foreground">Materiale (pe curs)</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Incarci PDF/DOCX (storage) sau adaugi un URL.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Poti face drag & drop sau selecta mai multe fisiere (PDF/DOCX) + optional un URL.</p>
 
         {courses.map((c) => {
           const mats = materialsByCourse[c.id] ?? [];
           const draft = materialDraftByCourse[c.id] ?? { title: "", url: "", description: "" };
-          const file = materialFileByCourse[c.id] ?? null;
+          const files = materialFilesByCourse[c.id] ?? [];
 
           return (
             <div key={`materials-${c.id}`} className="mt-4 rounded-md border border-border/70 bg-muted/10 p-4">
@@ -563,24 +609,58 @@ export default function ProfesorCursuriPage() {
 
               <div className="mt-3 grid gap-2 md:grid-cols-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Titlu</label>
+                  <label className="text-xs font-medium text-muted-foreground">Titlu (optional)</label>
                   <input
                     value={draft.title}
                     onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, title: e.target.value } }))}
                     className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                    placeholder="Daca incarci mai multe, se aplica la toate"
                   />
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Fisier (PDF/DOCX)</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    onChange={(e) => setMaterialFileByCourse((prev) => ({ ...prev, [c.id]: e.target.files?.[0] ?? null }))}
-                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                  />
-                  {file ? <div className="mt-1 text-[11px] text-muted-foreground">{file.name}</div> : null}
+
+                <div className="md:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground">Dropzone (PDF/DOCX)</label>
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const list = Array.from(e.dataTransfer.files ?? []).filter((f) => f && f.size > 0);
+                      setMaterialFilesByCourse((prev) => ({ ...prev, [c.id]: mergeFiles(prev[c.id] ?? [], list) }));
+                    }}
+                    className="mt-1 rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground"
+                  >
+                    Trage aici fisierele sau foloseste butonul de selectare.
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={(e) => {
+                          const list = Array.from(e.target.files ?? []);
+                          setMaterialFilesByCourse((prev) => ({ ...prev, [c.id]: mergeFiles(prev[c.id] ?? [], list) }));
+                          e.currentTarget.value = "";
+                        }}
+                        className="w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                      />
+                      {files.length ? (
+                        <button
+                          type="button"
+                          onClick={() => setMaterialFilesByCourse((prev) => ({ ...prev, [c.id]: [] }))}
+                          className="bg-muted/30 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
+                        >
+                          Goleste
+                        </button>
+                      ) : null}
+                    </div>
+                    {files.length ? (
+                      <div className="mt-2 text-[11px] text-muted-foreground">
+                        Selectate: <span className="font-mono text-foreground">{files.length}</span>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-                <div>
+
+                <div className="md:col-span-2">
                   <label className="text-xs font-medium text-muted-foreground">URL (optional)</label>
                   <input
                     value={draft.url}
@@ -590,12 +670,10 @@ export default function ProfesorCursuriPage() {
                   />
                 </div>
                 <div className="md:col-span-3">
-                  <label className="text-xs font-medium text-muted-foreground">Descriere</label>
+                  <label className="text-xs font-medium text-muted-foreground">Descriere (optional)</label>
                   <input
                     value={draft.description}
-                    onChange={(e) =>
-                      setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, description: e.target.value } }))
-                    }
+                    onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, description: e.target.value } }))}
                     className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
                   />
                 </div>
@@ -606,24 +684,32 @@ export default function ProfesorCursuriPage() {
                   type="button"
                   disabled={addMaterialMutation.isPending}
                   onClick={() =>
-                    addMaterialMutation.mutate({ courseId: c.id, title: draft.title, url: draft.url, description: draft.description, file })
+                    addMaterialMutation.mutate({
+                      courseId: c.id,
+                      title: draft.title,
+                      url: draft.url,
+                      description: draft.description,
+                      files,
+                    })
                   }
                   className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
                 >
-                  Adauga material
+                  Upload / Adauga
                 </button>
               </div>
 
               <div className="mt-3 text-xs text-muted-foreground">Materiale curente: {mats.length}</div>
               {mats.length ? (
                 <div className="mt-2 space-y-1">
-                  {mats.slice(0, 5).map((m) => (
+                  {mats.slice(0, 8).map((m) => (
                     <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="block text-xs text-foreground underline">
                       {m.title}
                     </a>
                   ))}
                 </div>
-              ) : null}
+              ) : (
+                <div className="mt-2 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista materiale.</div>
+              )}
             </div>
           );
         })}

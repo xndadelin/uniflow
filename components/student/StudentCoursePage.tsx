@@ -43,6 +43,28 @@ type ResourceRequestRow = {
   created_at: string;
 };
 
+type HomeworkRow = {
+  id: number;
+  title: string;
+  file_url: string;
+  submitted_at: string;
+};
+
+type TokenActivityRow = {
+  id: number;
+  tokens_used: number;
+  note: string | null;
+  created_at: string;
+};
+
+type CourseActivityRow = {
+  id: number;
+  title: string;
+  description: string | null;
+  token_cost: number;
+  created_at: string;
+};
+
 function getErrorMessage(err: unknown) {
   if (!err) return "Eroare necunoscuta.";
   if (err instanceof Error) return err.message;
@@ -60,6 +82,10 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
   const supabase = useMemo(() => createClient(), []);
   const [requestType, setRequestType] = useState<StudentResourceRow["resource_type"]>("tokens");
   const [requestAmount, setRequestAmount] = useState<string>("1");
+  const [homeworkTitle, setHomeworkTitle] = useState<string>("");
+  const [homeworkUrl, setHomeworkUrl] = useState<string>("");
+  const [selectedActivityId, setSelectedActivityId] = useState<string>("");
+  const [activityNote, setActivityNote] = useState<string>("");
 
   const enrollmentQuery = useQuery({
     queryKey: ["course-enrollment", courseId],
@@ -116,6 +142,48 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
     },
   });
 
+  const activitiesQuery = useQuery({
+    queryKey: ["course-activities", courseId],
+    enabled: enrollmentQuery.data?.isEnrolled === true,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_activities")
+        .select("id,title,description,token_cost,created_at")
+        .eq("course_id", courseId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as CourseActivityRow[];
+    },
+  });
+
+  const homeworkQuery = useQuery({
+    queryKey: ["course-homework-submissions", courseId],
+    enabled: enrollmentQuery.data?.isEnrolled === true,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_homework_submissions")
+        .select("id,title,file_url,submitted_at")
+        .eq("course_id", courseId)
+        .order("submitted_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as HomeworkRow[];
+    },
+  });
+
+  const tokenActivitiesQuery = useQuery({
+    queryKey: ["course-token-activities", courseId],
+    enabled: enrollmentQuery.data?.isEnrolled === true,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_token_activities")
+        .select("id,tokens_used,note,created_at")
+        .eq("course_id", courseId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as TokenActivityRow[];
+    },
+  });
+
   const requestsQuery = useQuery({
     queryKey: ["course-resource-requests", courseId],
     enabled: enrollmentQuery.data?.isEnrolled === true,
@@ -145,6 +213,43 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
       toast.success("Cerere trimisa.");
       setRequestAmount("1");
       await requestsQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
+  });
+
+  const submitHomeworkMutation = useMutation({
+    mutationFn: async () => {
+      const t = homeworkTitle.trim();
+      const u = homeworkUrl.trim();
+      if (!t) throw new Error("Titlu invalid.");
+      if (!u) throw new Error("URL invalid.");
+      const { error } = await supabase.rpc("submit_homework", { _course_id: courseId, _title: t, _file_url: u });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Tema incarcata.");
+      setHomeworkTitle("");
+      setHomeworkUrl("");
+      await homeworkQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
+  });
+
+  const consumeActivityTokensMutation = useMutation({
+    mutationFn: async () => {
+      const actId = Number(selectedActivityId);
+      if (!Number.isFinite(actId) || actId <= 0) throw new Error("Selecteaza o activitate.");
+      const { error } = await supabase.rpc("consume_tokens_for_activity", {
+        _course_id: courseId,
+        _activity_id: actId,
+        _note: activityNote.trim() || null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Activitate inregistrata. Token-urile au fost consumate automat.");
+      setActivityNote("");
+      await Promise.all([resourcesQuery.refetch(), tokenActivitiesQuery.refetch()]);
     },
     onError: (e: unknown) => toast.error(getErrorMessage(e)),
   });
@@ -272,6 +377,137 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
                 Validarea utilizarii abonamentelor se face doar din link-ul primit pe email.
               </div>
             </div>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
+        <h2 className="font-mono text-sm font-semibold text-foreground">Incarca tema</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Trimite un link catre tema (ex: Google Drive / GitHub / PDF public).</p>
+
+        <div className="mt-3 grid gap-2 md:grid-cols-3 md:items-end">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Titlu</label>
+            <input
+              value={homeworkTitle}
+              onChange={(e) => setHomeworkTitle(e.target.value)}
+              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              placeholder="Tema 1"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-xs font-medium text-muted-foreground">URL</label>
+            <input
+              value={homeworkUrl}
+              onChange={(e) => setHomeworkUrl(e.target.value)}
+              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              placeholder="https://..."
+            />
+          </div>
+          <div className="md:col-span-3 flex justify-end">
+            <button
+              type="button"
+              disabled={submitHomeworkMutation.isPending}
+              onClick={() => submitHomeworkMutation.mutate()}
+              className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+            >
+              Incarca tema
+            </button>
+          </div>
+        </div>
+
+        {homeworkQuery.isLoading ? (
+          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
+        ) : homeworkQuery.isError ? (
+          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+            Eroare: <span className="font-mono text-xs">{getErrorMessage(homeworkQuery.error)}</span>
+          </div>
+        ) : (homeworkQuery.data ?? []).length === 0 ? (
+          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu ai teme incarcate inca.</div>
+        ) : (
+          <div className="mt-4 space-y-2">
+            {(homeworkQuery.data ?? []).slice(0, 10).map((h) => (
+              <a
+                key={h.id}
+                href={h.file_url}
+                target="_blank"
+                rel="noreferrer"
+                className="block rounded-md border border-border/70 bg-muted/10 p-4 transition hover:bg-muted/20"
+              >
+                <div className="text-sm font-medium text-foreground">{h.title}</div>
+                <div className="mt-2 text-[11px] text-muted-foreground">{new Date(h.submitted_at).toLocaleString()}</div>
+              </a>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
+        <h2 className="font-mono text-sm font-semibold text-foreground">Consum token-uri prin activitati</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Selectezi o activitate, iar sistemul consuma automat <span className="font-mono">token_cost</span>.
+        </p>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-[320px_1fr_auto] sm:items-end">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Activitate</label>
+            <select
+              value={selectedActivityId}
+              onChange={(e) => setSelectedActivityId(e.target.value)}
+              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+            >
+              <option value="">— alege —</option>
+              {(activitiesQuery.data ?? []).map((a) => (
+                <option key={a.id} value={String(a.id)}>
+                  {a.title} (cost: {a.token_cost})
+                </option>
+              ))}
+            </select>
+            {activitiesQuery.isError ? (
+              <div className="mt-1 text-[11px] text-destructive">{getErrorMessage(activitiesQuery.error)}</div>
+            ) : null}
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Nota (optional)</label>
+            <input
+              value={activityNote}
+              onChange={(e) => setActivityNote(e.target.value)}
+              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              placeholder="Ex: 10 generari imagine"
+            />
+          </div>
+          <button
+            type="button"
+            disabled={consumeActivityTokensMutation.isPending}
+            onClick={() => consumeActivityTokensMutation.mutate()}
+            className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+          >
+            Consuma automat
+          </button>
+        </div>
+
+        {tokenActivitiesQuery.isLoading ? (
+          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
+        ) : tokenActivitiesQuery.isError ? (
+          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+            Eroare: <span className="font-mono text-xs">{getErrorMessage(tokenActivitiesQuery.error)}</span>
+          </div>
+        ) : (tokenActivitiesQuery.data ?? []).length === 0 ? (
+          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista activitati inca.</div>
+        ) : (
+          <div className="mt-4 space-y-2 text-sm">
+            {(tokenActivitiesQuery.data ?? []).slice(0, 10).map((a) => (
+              <div key={a.id} className="rounded-md border border-border/70 bg-muted/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-mono text-xs text-muted-foreground">#{a.id}</div>
+                  <div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}</div>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">tokens: {a.tokens_used}</span>
+                  {a.note ? <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">nota: {a.note}</span> : null}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>

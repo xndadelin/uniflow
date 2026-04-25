@@ -1758,7 +1758,7 @@ grant select on public.vps_credentials to authenticated;
 grant select, update on public.email_outbox to authenticated;
 grant select, insert, update, delete on public.course_resource_requirements to authenticated;
 grant select on public.course_enrollments to authenticated;
-grant select on public.course_materials to authenticated;
+grant select, insert, update, delete on public.course_materials to authenticated;
 grant select on public.course_student_resources to authenticated;
 grant select, insert on public.course_resource_requests to authenticated;
 grant select, insert on public.course_homework_submissions to authenticated;
@@ -1767,6 +1767,9 @@ grant select on public.course_vps_validations to authenticated;
 grant select on public.course_resource_allocations to authenticated;
 grant select on public.course_activities to authenticated;
 grant select on public.vps_email_validation_tokens to authenticated;
+
+-- Needed for inserts into bigserial PK table `course_materials`
+grant usage, select on sequence public.course_materials_id_seq to authenticated;
 
 revoke all on function public.enroll_in_course(bigint) from public;
 grant execute on function public.enroll_in_course(bigint) to authenticated;
