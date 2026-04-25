@@ -92,6 +92,9 @@ export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, i
                   <DropdownMenuItem asChild>
                     <Link href="/login">Schimba cont</Link>
                   </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/forgot-password">Resetare parola</Link>
+                  </DropdownMenuItem>
                   {(onSignOut ?? signOut) ? (
                     <>
                       <DropdownMenuSeparator />
