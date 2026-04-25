@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type AuditLogRow = {
   id: number;
@@ -46,6 +47,12 @@ function getChangedKeys(metadata: unknown): string[] {
   if (!("changed_keys" in metadata)) return [];
   const v = (metadata as { changed_keys?: unknown }).changed_keys;
   return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+}
+
+function getChanges(metadata: unknown): unknown {
+  if (!metadata || typeof metadata !== "object") return null;
+  if (!("changes" in metadata)) return null;
+  return (metadata as { changes?: unknown }).changes ?? null;
 }
 
 export default function AuditPage() {
@@ -154,86 +161,83 @@ export default function AuditPage() {
         </Button>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-start">
-        <div className="space-y-6">
-          <Card>
-            <CardHeader className="space-y-1">
-              <CardTitle className="text-base font-semibold tracking-tight">Audit logs</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Total: <span className="font-mono text-foreground">{count}</span>
-              </p>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="sticky top-[60px] z-10 border-b border-border/60 bg-card/90 backdrop-blur supports-[backdrop-filter]:bg-card/70">
-                <div className="grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
-                  <div className="space-y-1">
-                    <Label htmlFor="audit-search" className="text-xs">
-                      Cauta (local in pagina curenta)
-                    </Label>
-                    <Input
-                      id="audit-search"
-                      value={search}
-                      onChange={(e) => {
-                        setSearch(e.target.value);
-                        setPage(1);
-                      }}
-                      placeholder="action / entity / course / message..."
-                    />
-                  </div>
-                  <div className="sm:pb-[2px]">
-                    <Pagination variant="compact" page={page} pageSize={pageSize} totalItems={count} onPageChange={setPage} />
-                  </div>
-                </div>
+      <Card>
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-base font-semibold tracking-tight">Audit logs</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Total: <span className="font-mono text-foreground">{count}</span>
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="sticky top-[60px] z-10 border-b border-border/60 bg-card/90 backdrop-blur supports-[backdrop-filter]:bg-card/70">
+            <div className="grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+              <div className="space-y-1">
+                <Label htmlFor="audit-search" className="text-xs">
+                  Cauta (local in pagina curenta)
+                </Label>
+                <Input
+                  id="audit-search"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="action / entity / course / message..."
+                />
               </div>
+              <div className="sm:pb-[2px]">
+                <Pagination variant="compact" page={page} pageSize={pageSize} totalItems={count} onPageChange={setPage} />
+              </div>
+            </div>
+          </div>
 
-              {logsQuery.isLoading ? (
-                <div className="p-4 text-sm text-muted-foreground">Se incarca...</div>
-              ) : logsQuery.isError ? (
-                <div className="p-4">
-                  <div className="rounded-md bg-destructive/5 p-4 text-sm text-destructive">
-                    Eroare: <span className="font-mono text-xs">{getErrorMessage(logsQuery.error)}</span>
-                  </div>
-                </div>
-              ) : rows.length === 0 ? (
-                <div className="p-4">
-                  <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista log-uri.</div>
-                </div>
-              ) : (
-                <div className="max-h-[65vh] overflow-auto">
-                  <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/70">
-                      <TableRow>
-                        <TableHead>Timp</TableHead>
-                        <TableHead>Actiune</TableHead>
-                        <TableHead>Entity</TableHead>
-                        <TableHead className="text-right">Curs</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.map((r) => (
-                    (() => {
-                      const changed = getChangedKeys(r.metadata);
-                      const changedCount = changed.length;
-                      const showChanged = r.action.endsWith("_update") && changedCount > 0;
-                      return (
-                        <TableRow
-                          key={r.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setSelected(r)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              setSelected(r);
-                            }
-                          }}
-                          className="cursor-pointer hover:bg-muted/20"
-                        >
-                          <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                            {new Date(r.created_at).toLocaleString()}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-1">
+          {logsQuery.isLoading ? (
+            <div className="p-4 text-sm text-muted-foreground">Se incarca...</div>
+          ) : logsQuery.isError ? (
+            <div className="p-4">
+              <div className="rounded-md bg-destructive/5 p-4 text-sm text-destructive">
+                Eroare: <span className="font-mono text-xs">{getErrorMessage(logsQuery.error)}</span>
+              </div>
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="p-4">
+              <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista log-uri.</div>
+            </div>
+          ) : (
+            <div className="max-h-[70vh] overflow-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/70">
+                  <TableRow>
+                    <TableHead className="px-4 py-3">Timp</TableHead>
+                    <TableHead className="px-4 py-3">Actiune</TableHead>
+                    <TableHead className="px-4 py-3">Entity</TableHead>
+                    <TableHead className="px-4 py-3 text-right">Curs</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((r) => {
+                    const changed = getChangedKeys(r.metadata);
+                    const changedCount = changed.length;
+                    const showChanged = r.action.endsWith("_update") && changedCount > 0;
+                    return (
+                      <TableRow
+                        key={r.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelected(r)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelected(r);
+                          }
+                        }}
+                        className="cursor-pointer hover:bg-muted/20"
+                      >
+                        <TableCell className="px-4 py-3 text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                          {new Date(r.created_at).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="px-4 py-3">
+                          <div className="flex flex-col gap-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="text-sm font-medium text-foreground">{r.action}</div>
                               {showChanged ? (
@@ -242,82 +246,71 @@ export default function AuditPage() {
                                 </Badge>
                               ) : null}
                             </div>
-                              {r.message ? <div className="text-[11px] text-muted-foreground">{r.message}</div> : null}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            <div className="flex flex-wrap items-center gap-2">
-                              {r.entity_table ? <Badge variant="secondary">{r.entity_table}</Badge> : <Badge variant="outline">n/a</Badge>}
-                              {r.entity_id ? <span className="font-mono">{r.entity_id}</span> : null}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">{r.course_id ?? "-"}</TableCell>
-                        </TableRow>
-                      );
-                    })()
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="lg:sticky lg:top-20">
+                            {r.message ? <div className="text-[11px] text-muted-foreground">{r.message}</div> : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {r.entity_table ? <Badge variant="secondary">{r.entity_table}</Badge> : <Badge variant="outline">n/a</Badge>}
+                            {r.entity_id ? <span className="font-mono">{r.entity_id}</span> : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-4 py-3 text-right text-xs text-muted-foreground whitespace-nowrap">{r.course_id ?? "-"}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Dialog open={Boolean(selected)} onOpenChange={(open) => (!open ? setSelected(null) : null)}>
+        <DialogContent className="max-w-3xl p-0">
           {selected ? (
-            <Card>
-              <CardHeader className="space-y-1">
-                <CardTitle className="text-base font-semibold tracking-tight">Detalii log</CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  #{selected.id} · {new Date(selected.created_at).toLocaleString()} · <span className="font-mono">{selected.action}</span>
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs text-muted-foreground">
-                    Entity:{" "}
-                    <span className="font-mono text-foreground">
-                      {selected.entity_table ?? "n/a"} {selected.entity_id ? `· ${selected.entity_id}` : ""}
-                    </span>
-                    {selected.course_id ? (
-                      <>
-                        {" "}
-                        · Curs: <span className="font-mono text-foreground">#{selected.course_id}</span>
-                      </>
-                    ) : null}
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setSelected(null)}>
-                    Inchide
-                  </Button>
-                </div>
+            <div className="overflow-hidden rounded-lg">
+              <DialogHeader className="space-y-1 border-b border-border/60 px-5 py-4">
+                <DialogTitle className="text-base font-semibold tracking-tight">
+                  #{selected.id} · <span className="font-mono">{selected.action}</span>
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  {new Date(selected.created_at).toLocaleString()} ·{" "}
+                  <span className="font-mono">
+                    {selected.entity_table ?? "n/a"}
+                    {selected.entity_id ? ` · ${selected.entity_id}` : ""}
+                    {selected.course_id ? ` · course#${selected.course_id}` : ""}
+                  </span>
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="px-5 py-4">
+                {selected.message ? <div className="mb-3 text-sm text-foreground">{selected.message}</div> : null}
+
                 {(() => {
                   const changed = getChangedKeys(selected.metadata);
+                  const changes = getChanges(selected.metadata);
                   return changed.length ? (
-                    <div className="rounded-md border border-border/60 bg-muted/10 p-3 text-xs text-muted-foreground">
-                      Changed keys: <span className="font-mono text-foreground">{changed.join(", ")}</span>
+                    <div className="mb-3 rounded-md border border-border/60 bg-muted/10 p-3">
+                      <div className="text-xs text-muted-foreground">Changed keys</div>
+                      <div className="mt-1 text-xs font-mono text-foreground">{changed.join(", ")}</div>
+                      {changes ? (
+                        <pre className="mt-3 max-h-[220px] overflow-auto rounded-md border border-border/60 bg-background/40 p-3 text-xs text-muted-foreground">
+                          {prettyJson(changes)}
+                        </pre>
+                      ) : null}
                     </div>
                   ) : null;
                 })()}
-                {selected.message ? <div className="text-sm text-foreground">{selected.message}</div> : null}
-                <pre className="max-h-[65vh] overflow-auto rounded-md border border-border/60 bg-muted/10 p-3 text-xs text-muted-foreground">
+
+                <div className="text-xs text-muted-foreground">Metadata (full)</div>
+                <pre className="mt-2 max-h-[50vh] overflow-auto rounded-md border border-border/60 bg-muted/10 p-3 text-xs text-muted-foreground">
                   {prettyJson(selected.metadata)}
                 </pre>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardHeader className="space-y-1">
-                <CardTitle className="text-base font-semibold tracking-tight">Detalii</CardTitle>
-                <p className="text-xs text-muted-foreground">Selectează un rând din stânga.</p>
-              </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                Click pe un log ca să vezi metadata complet (ex. <span className="font-mono">old/new</span>).
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
     </main>
   );
