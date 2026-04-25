@@ -449,6 +449,16 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
     return map;
   }, [allocationsQuery.data]);
 
+  const bonusAmountByType = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of allocationsQuery.data ?? []) {
+      map.set(a.resource_type, a.professor_bonus_amount ?? 0);
+    }
+    return map;
+  }, [allocationsQuery.data]);
+
+  const resourceLabel = (t: ResourceRequestRow["resource_type"]) => (t === "tokens" ? "Token-uri AI" : "VPS");
+
   if (profesorCheckQuery.isLoading) {
     return (
       <main className="flex min-h-[70vh] items-center justify-center px-4 py-8">
@@ -533,6 +543,27 @@ export function ProfesorCourseManageClient({ courseId }: { courseId: number }) {
                   {label}
                 </button>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-md border border-border/60 bg-muted/10 p-3">
+              <div className="text-xs font-medium text-foreground">Resurse rămase (bonus profesor)</div>
+              <div className="mt-2 space-y-1.5 text-xs text-muted-foreground">
+                {(["tokens", "vps_subscription"] as const).map((t) => {
+                  const remaining = bonusRemainingByType.get(t) ?? 0;
+                  const total = bonusAmountByType.get(t) ?? 0;
+                  return (
+                    <div key={t} className="flex items-center justify-between gap-3">
+                      <span>{resourceLabel(t)}</span>
+                      <span className="font-mono tabular-nums text-foreground">
+                        {remaining} / {total}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-2 text-[11px] text-muted-foreground">
+                Aici e doar bonusul tău (10%) folosit la aprobarea cererilor.
+              </div>
             </div>
 
             <div className="mt-4 text-xs text-muted-foreground">

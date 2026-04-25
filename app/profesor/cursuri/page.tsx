@@ -9,6 +9,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 
 type Course = {
   id: number;
@@ -245,39 +248,48 @@ export default function ProfesorCursuriPage() {
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <div className="md:col-span-2">
-            <label className="text-xs font-medium text-muted-foreground">Titlu</label>
-            <input
+            <Label className="text-xs" htmlFor="course-title">
+              Titlu
+            </Label>
+            <Input
+              id="course-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Ex: Inteligenta Artificiala"
-              className="mt-1 w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              className="mt-1"
             />
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs font-medium text-muted-foreground">Descriere (optional)</label>
-            <textarea
+            <Label className="text-xs" htmlFor="course-description">
+              Descriere (optional)
+            </Label>
+            <Textarea
+              id="course-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Scurt rezumat..."
-              className="mt-1 min-h-[90px] w-full resize-y rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              className="mt-1 min-h-[90px]"
             />
           </div>
 
           <div className="md:max-w-xs">
-            <label className="text-xs font-medium text-muted-foreground">Numar maxim studenti</label>
-            <input
+            <Label className="text-xs" htmlFor="course-max-students">
+              Numar maxim studenti
+            </Label>
+            <Input
+              id="course-max-students"
               type="number"
               value={maxStudents}
               min={1}
               onChange={(e) => setMaxStudents(e.target.value)}
-              className="mt-1 w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              className="mt-1"
             />
             <p className="mt-1 text-[11px] text-muted-foreground">Folosit pentru planificare/inscrieri.</p>
           </div>
 
           <div className="md:col-span-2">
-            <label className="text-xs font-medium text-muted-foreground">Resurse digitale necesare</label>
+            <Label className="text-xs">Resurse digitale necesare</Label>
             <div className="mt-2 space-y-2">
               {requirements.length === 0 ? (
                 <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
@@ -297,13 +309,13 @@ export default function ProfesorCursuriPage() {
                             prev.map((x, idx) => (idx === i ? { ...x, resource_type: e.target.value as RequirementDraft["resource_type"] } : x))
                           )
                         }
-                        className="w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
                         <option value="tokens">Token-uri AI</option>
                         <option value="vps_subscription">Abonamente VPS</option>
                       </select>
 
-                      <input
+                      <Input
                         type="number"
                         min={0}
                         value={r.required_per_student}
@@ -312,7 +324,6 @@ export default function ProfesorCursuriPage() {
                             prev.map((x, idx) => (idx === i ? { ...x, required_per_student: e.target.value } : x))
                           )
                         }
-                        className="w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
                       />
 
                       <div className="text-[11px] text-muted-foreground sm:text-xs">
