@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { CommandPalette } from "@/components/CommandPalette";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +45,16 @@ export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, i
         </div>
 
         <div className="flex items-center gap-2">
+          <CommandPalette isAuthenticated={isAuthenticated} isAdmin={isAdmin} isProfesor={isProfesor} isAudit={isAudit} />
+          <Button
+            variant="outline"
+            size="sm"
+            className="hidden gap-2 sm:inline-flex"
+            onClick={() => window.dispatchEvent(new Event("uniflow:open-command-palette"))}
+          >
+            Cauta
+            <span className="rounded border border-border/60 bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted-foreground">⌘K</span>
+          </Button>
           <ThemeToggle />
           {isAuthenticated ? (
             <>

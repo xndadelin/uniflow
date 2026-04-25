@@ -39,7 +39,19 @@ export function StudentHome() {
   const supabase = useMemo(() => createClient(), []);
   const [enrolledPage, setEnrolledPage] = useState<number>(1);
   const [availablePage, setAvailablePage] = useState<number>(1);
+  const [enrolledSearch, setEnrolledSearch] = useState<string>("");
+  const [availableSearch, setAvailableSearch] = useState<string>("");
   const pageSize = 10;
+
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      return user;
+    },
+  });
 
   const coursesQuery = useQuery({
     queryKey: ["student-courses-all"],
@@ -81,53 +93,100 @@ export function StudentHome() {
   const enrolledSet = new Set((enrollmentsQuery.data ?? []).map((e) => e.course_id));
   const enrolledCourses = courses.filter((c) => enrolledSet.has(c.id));
   const availableCourses = courses.filter((c) => c.enrollment_open && !enrolledSet.has(c.id));
+
+  const enrolledFiltered = enrolledSearch.trim()
+    ? enrolledCourses.filter((c) => `${c.title} ${c.description ?? ""}`.toLowerCase().includes(enrolledSearch.trim().toLowerCase()))
+    : enrolledCourses;
+  const availableFiltered = availableSearch.trim()
+    ? availableCourses.filter((c) => `${c.title} ${c.description ?? ""}`.toLowerCase().includes(availableSearch.trim().toLowerCase()))
+    : availableCourses;
+
   const enrolledTotal = enrolledCourses.length;
   const availableTotal = availableCourses.length;
-  const enrolledPaged = enrolledCourses.slice((enrolledPage - 1) * pageSize, enrolledPage * pageSize);
-  const availablePaged = availableCourses.slice((availablePage - 1) * pageSize, availablePage * pageSize);
+  const enrolledTotalFiltered = enrolledFiltered.length;
+  const availableTotalFiltered = availableFiltered.length;
+  const enrolledPaged = enrolledFiltered.slice((enrolledPage - 1) * pageSize, enrolledPage * pageSize);
+  const availablePaged = availableFiltered.slice((availablePage - 1) * pageSize, availablePage * pageSize);
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
-      <header className="mb-8">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Student</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Cursuri</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Vezi cursurile disponibile și înrolează-te la cele care permit înscriere.
-        </p>
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Student</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">Cursuri, înscrieri și acces rapid la pagina fiecărui curs.</p>
+        </div>
+        <div className="flex flex-wrap gap-2" />
       </header>
 
+      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-md border border-border/60 bg-muted/10 px-4 py-3">
+          <div className="text-xs text-muted-foreground">Înscris</div>
+          <div className="mt-1 font-mono text-2xl text-foreground">{enrolledTotal}</div>
+          <div className="mt-1 text-xs text-muted-foreground">cursuri</div>
+        </div>
+        <div className="rounded-md border border-border/60 bg-muted/10 px-4 py-3">
+          <div className="text-xs text-muted-foreground">Disponibile</div>
+          <div className="mt-1 font-mono text-2xl text-foreground">{availableTotal}</div>
+          <div className="mt-1 text-xs text-muted-foreground">cu înscriere deschisă</div>
+        </div>
+        <div className="rounded-md border border-border/60 bg-muted/10 px-4 py-3">
+          <div className="text-xs text-muted-foreground">Cont</div>
+          <div className="mt-1 truncate font-mono text-sm text-foreground">
+            {meQuery.data?.email ?? "—"}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">autentificat</div>
+        </div>
+      </div>
+
       <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold tracking-tight">Cursurile mele</CardTitle>
+        <Card className="shadow-sm">
+          <CardHeader className="flex flex-col gap-2 pb-6 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-base font-semibold tracking-tight">Cursurile mele</CardTitle>
+              <p className="text-sm text-muted-foreground">Acces rapid la materiale, teme și resurse.</p>
+            </div>
+            <Badge variant="secondary">{enrolledTotalFiltered}</Badge>
           </CardHeader>
-          <CardContent>
-        {enrollmentsQuery.isLoading || coursesQuery.isLoading ? (
-          <div className="text-sm text-muted-foreground">Se incarca...</div>
-        ) : enrolledTotal === 0 ? (
-          <div className="text-sm text-muted-foreground">Nu esti inrolat la niciun curs inca.</div>
-        ) : (
-          <div>
-            <div className="mb-4">
+          <CardContent className="pt-0">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="w-full sm:max-w-xs">
+                <label className="text-xs text-muted-foreground">Cauta</label>
+                <input
+                  value={enrolledSearch}
+                  onChange={(e) => {
+                    setEnrolledSearch(e.target.value);
+                    setEnrolledPage(1);
+                  }}
+                  placeholder="titlu / descriere..."
+                  className="mt-1 w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                />
+              </div>
               <Pagination
                 variant="compact"
                 page={enrolledPage}
                 pageSize={pageSize}
-                totalItems={enrolledTotal}
+                totalItems={enrolledTotalFiltered}
                 onPageChange={setEnrolledPage}
               />
             </div>
+        {enrollmentsQuery.isLoading || coursesQuery.isLoading ? (
+          <div className="text-sm text-muted-foreground">Se incarca...</div>
+        ) : enrolledTotalFiltered === 0 ? (
+          <div className="text-sm text-muted-foreground">Nu esti inrolat la niciun curs inca.</div>
+        ) : (
+          <div className="overflow-hidden rounded-md border border-border/60 bg-muted/10">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Curs</TableHead>
-                  <TableHead className="text-right">Max studenti</TableHead>
+                  <TableHead className="px-5 py-4">Curs</TableHead>
+                  <TableHead className="px-5 py-4 text-right">Max</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {enrolledPaged.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="min-w-[260px]">
+                  <TableRow key={c.id} className="hover:bg-muted/20">
+                    <TableCell className="min-w-[260px] px-5 py-4">
                       <div className="space-y-1">
                         <Link href={`/cursuri/${c.id}`} className="text-sm font-medium underline-offset-4 hover:underline">
                           {c.title}
@@ -135,7 +194,7 @@ export function StudentHome() {
                         {c.description ? <div className="text-xs text-muted-foreground">{c.description}</div> : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{c.max_students}</TableCell>
+                    <TableCell className="px-5 py-4 text-right text-xs text-muted-foreground tabular-nums">{c.max_students}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -145,12 +204,38 @@ export function StudentHome() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold tracking-tight">Cursuri disponibile</CardTitle>
-            <p className="text-xs text-muted-foreground">Cursuri cu inscriere deschisa, la care nu esti inrolat inca.</p>
+        <Card className="shadow-sm">
+          <CardHeader className="space-y-1 pb-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="space-y-1">
+                <CardTitle className="text-base font-semibold tracking-tight">Cursuri disponibile</CardTitle>
+                <p className="text-sm text-muted-foreground">Cursuri cu înscriere deschisă, la care nu ești înrolat încă.</p>
+              </div>
+              <Badge variant="secondary">{availableTotalFiltered}</Badge>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-0">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="w-full sm:max-w-xs">
+                <label className="text-xs text-muted-foreground">Cauta</label>
+                <input
+                  value={availableSearch}
+                  onChange={(e) => {
+                    setAvailableSearch(e.target.value);
+                    setAvailablePage(1);
+                  }}
+                  placeholder="titlu / descriere..."
+                  className="mt-1 w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                />
+              </div>
+              <Pagination
+                variant="compact"
+                page={availablePage}
+                pageSize={pageSize}
+                totalItems={availableTotalFiltered}
+                onPageChange={setAvailablePage}
+              />
+            </div>
 
         {coursesQuery.isLoading ? (
           <div className="text-sm text-muted-foreground">Se incarca...</div>
@@ -159,27 +244,18 @@ export function StudentHome() {
             Eroare la incarcarea cursurilor: <span className="font-mono text-xs">{getErrorMessage(coursesQuery.error)}</span>
           </div>
         ) : (
-          <div>
-            <div className="mb-4">
-              <Pagination
-                variant="compact"
-                page={availablePage}
-                pageSize={pageSize}
-                totalItems={availableTotal}
-                onPageChange={setAvailablePage}
-              />
-            </div>
+          <div className="overflow-hidden rounded-md border border-border/60 bg-muted/10">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Curs</TableHead>
-                  <TableHead className="text-center">Inscriere</TableHead>
-                  <TableHead className="text-right">Max studenti</TableHead>
-                  <TableHead className="text-right">Actiune</TableHead>
+                  <TableHead className="px-5 py-4">Curs</TableHead>
+                  <TableHead className="px-5 py-4 text-center">Înscriere</TableHead>
+                  <TableHead className="px-5 py-4 text-right">Max</TableHead>
+                  <TableHead className="px-5 py-4 text-right">Actiune</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {availableTotal === 0 ? (
+                {availableTotalFiltered === 0 ? (
                   <TableRow>
                     <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
                       Nu exista cursuri disponibile pentru inscriere.
@@ -189,8 +265,8 @@ export function StudentHome() {
                   availablePaged.map((c) => {
                     const canEnroll = true;
                     return (
-                      <TableRow key={c.id}>
-                        <TableCell className="min-w-[260px]">
+                      <TableRow key={c.id} className="hover:bg-muted/20">
+                        <TableCell className="min-w-[260px] px-5 py-4">
                           <div className="space-y-1">
                             <Link href={`/cursuri/${c.id}`} className="text-sm font-medium underline-offset-4 hover:underline">
                               {c.title}
@@ -198,11 +274,11 @@ export function StudentHome() {
                             {c.description ? <div className="text-xs text-muted-foreground">{c.description}</div> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className="px-5 py-4 text-center">
                           <Badge variant="outline">deschisa</Badge>
                         </TableCell>
-                        <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{c.max_students}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="px-5 py-4 text-right text-xs text-muted-foreground tabular-nums">{c.max_students}</TableCell>
+                        <TableCell className="px-5 py-4 text-right">
                           <Button size="sm" onClick={() => enrollMutation.mutate(c.id)} disabled={!canEnroll || enrollMutation.isPending}>
                             Inroleaza-ma
                           </Button>
