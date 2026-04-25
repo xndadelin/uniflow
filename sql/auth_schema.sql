@@ -319,6 +319,291 @@ begin
   end if;
 end $$;
 
+-- ============================================================
+-- Admin domain (inventory, activities, vps credentials email outbox)
+-- ============================================================
+
+-- Global inventory for digital resources (admin managed)
+create table if not exists public.resource_inventory (
+  resource_type public.digital_resource_type primary key,
+  total_amount integer not null default 0 check (total_amount >= 0),
+  remaining_amount integer not null default 0 check (remaining_amount >= 0),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists resource_inventory_set_updated_at on public.resource_inventory;
+create trigger resource_inventory_set_updated_at
+before update on public.resource_inventory
+for each row execute function public.set_updated_at();
+
+-- Seed inventory rows for both resource types (idempotent)
+insert into public.resource_inventory (resource_type, total_amount, remaining_amount)
+values ('tokens', 0, 0), ('vps_subscription', 0, 0)
+on conflict (resource_type) do nothing;
+
+-- Admin activities (minimum 10 required for grading)
+create table if not exists public.admin_activities (
+  id bigserial primary key,
+  title text not null,
+  description text,
+  token_cost integer not null default 0 check (token_cost >= 0),
+  created_at timestamptz not null default now()
+);
+
+-- Ensure activity titles are unique (needed for upsert/seed by title)
+create unique index if not exists admin_activities_title_uidx on public.admin_activities (title);
+
+-- Seed default catalog (idempotent) so it exists "by default", without pressing a button.
+-- Also removes old placeholder rows used in earlier iterations.
+delete from public.admin_activities
+where title ~ '^Activitate [0-9]+$'
+  and coalesce(description, '') = 'Seed pentru punctaj'
+  and token_cost = 0;
+
+insert into public.admin_activities (title, description, token_cost)
+values
+  ('Rezumat text', 'Rezumat/explicare text cu AI', 10),
+  ('Generare imagine', 'Generare imagine cu AI', 50),
+  ('Asistenta dezvoltare software', 'Asistenta la dezvoltare aplicatii software', 5000),
+  ('Traducere text', 'Traducere text (RO/EN/FR etc.)', 25),
+  ('Corectare gramatica', 'Corectare gramatica si stil', 15),
+  ('Analiza cod', 'Analiza si explicare cod', 200),
+  ('Generare teste', 'Generare suite de teste unitare', 800),
+  ('Debugging ghidat', 'Diagnosticare si pasi de rezolvare', 600),
+  ('Generare documentatie', 'Documentatie pentru proiect/feature', 300),
+  ('Plan de invatare', 'Plan personalizat de invatare', 120)
+on conflict (title) do update
+set description = excluded.description,
+    token_cost = excluded.token_cost;
+
+-- Migration helper (idempotent)
+alter table public.admin_activities
+  add column if not exists token_cost integer not null default 0;
+
+create or replace function public.seed_admin_activities_min_10()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate popula activitati.';
+  end if;
+
+  -- Cleanup old placeholder seed rows (so defaults show up nicely in UI).
+  delete from public.admin_activities
+  where title ~ '^Activitate [0-9]+$'
+    and coalesce(description, '') = 'Seed pentru punctaj'
+    and token_cost = 0;
+
+  -- Ensure the default catalog exists (idempotent; updates values if they already exist).
+  insert into public.admin_activities (title, description, token_cost)
+  values
+    ('Rezumat text', 'Rezumat/explicare text cu AI', 10),
+    ('Generare imagine', 'Generare imagine cu AI', 50),
+    ('Asistenta dezvoltare software', 'Asistenta la dezvoltare aplicatii software', 5000),
+    ('Traducere text', 'Traducere text (RO/EN/FR etc.)', 25),
+    ('Corectare gramatica', 'Corectare gramatica si stil', 15),
+    ('Analiza cod', 'Analiza si explicare cod', 200),
+    ('Generare teste', 'Generare suite de teste unitare', 800),
+    ('Debugging ghidat', 'Diagnosticare si pasi de rezolvare', 600),
+    ('Generare documentatie', 'Documentatie pentru proiect/feature', 300),
+    ('Plan de invatare', 'Plan personalizat de invatare', 120)
+  on conflict (title) do update
+  set description = excluded.description,
+      token_cost = excluded.token_cost;
+end;
+$$;
+
+-- Admin RPC: add an activity with token cost
+create or replace function public.create_admin_activity(
+  _title text,
+  _description text,
+  _token_cost integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate crea activitati.';
+  end if;
+
+  if coalesce(trim(_title), '') = '' then
+    raise exception 'Titlu invalid.';
+  end if;
+
+  if _token_cost is null or _token_cost < 0 then
+    raise exception 'Token cost invalid.';
+  end if;
+
+  insert into public.admin_activities (title, description, token_cost)
+  values (trim(_title), nullif(trim(_description), ''), _token_cost);
+end;
+$$;
+
+-- Admin RPC: compute required totals from professor requirements and max_students, plus >=10% extra.
+create or replace function public.get_suggested_inventory()
+returns table (
+  resource_type public.digital_resource_type,
+  required_total integer,
+  suggested_total integer
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    r.resource_type,
+    coalesce(sum(r.required_per_student * c.max_students), 0)::int as required_total,
+    ((coalesce(sum(r.required_per_student * c.max_students), 0) * 110) + 99) / 100 as suggested_total
+  from public.course_resource_requirements r
+  join public.courses c on c.id = r.course_id
+  group by r.resource_type
+  order by r.resource_type;
+$$;
+
+-- VPS credentials per student (assigned by admin, can be "sent" via outbox)
+create table if not exists public.vps_credentials (
+  id bigserial primary key,
+  course_id bigint references public.courses(id) on delete cascade,
+  student_id uuid references public.app_users(id) on delete cascade,
+  username text not null,
+  password text not null,
+  host text,
+  port integer,
+  assigned_at timestamptz not null default now(),
+  unique (course_id, student_id)
+);
+
+-- Email outbox (simulated mail distribution)
+create table if not exists public.email_outbox (
+  id bigserial primary key,
+  to_email text not null,
+  subject text not null,
+  body text not null,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+
+-- Admin RPC: set inventory totals (remaining is reset to total)
+create or replace function public.set_resource_inventory(
+  _resource_type public.digital_resource_type,
+  _total integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate seta inventarul.';
+  end if;
+
+  insert into public.resource_inventory (resource_type, total_amount, remaining_amount)
+  values (_resource_type, greatest(_total, 0), greatest(_total, 0))
+  on conflict (resource_type) do update
+  set total_amount = excluded.total_amount,
+      remaining_amount = excluded.remaining_amount,
+      updated_at = now();
+end;
+$$;
+
+-- Admin RPC: allocate course resources AND subtract from global inventory (tokens/VPS)
+create or replace function public.allocate_course_resources_from_inventory(
+  _course_id bigint,
+  _resource_type public.digital_resource_type,
+  _allocated_amount integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inv_remaining integer;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate aloca resurse.';
+  end if;
+
+  select remaining_amount into inv_remaining
+  from public.resource_inventory
+  where resource_type = _resource_type;
+
+  if inv_remaining is null then
+    raise exception 'Inventar inexistent pentru acest tip.';
+  end if;
+
+  if inv_remaining < greatest(_allocated_amount, 0) then
+    raise exception 'Inventar insuficient: ramas %, cerut %.', inv_remaining, greatest(_allocated_amount, 0);
+  end if;
+
+  update public.resource_inventory
+  set remaining_amount = remaining_amount - greatest(_allocated_amount, 0)
+  where resource_type = _resource_type;
+
+  perform public.allocate_course_resources(_course_id, _resource_type, _allocated_amount);
+end;
+$$;
+
+-- Admin RPC: assign VPS credentials to enrolled students and queue emails (outbox)
+create or replace function public.assign_vps_credentials_and_queue_emails(
+  _course_id bigint,
+  _default_host text,
+  _default_port integer default 22
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r record;
+  v_username text;
+  v_password text;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate distribui credentiale.';
+  end if;
+
+  for r in
+    select e.student_id, u.email
+    from public.course_enrollments e
+    join public.app_users u on u.id = e.student_id
+    where e.course_id = _course_id
+  loop
+    -- Create credential if missing (simple deterministic username/password for demo; replace in production)
+    v_username := 'student_' || left(r.student_id::text, 8);
+    v_password := left(md5(r.student_id::text), 12);
+
+    insert into public.vps_credentials (course_id, student_id, username, password, host, port)
+    values (_course_id, r.student_id, v_username, v_password, _default_host, _default_port)
+    on conflict (course_id, student_id) do update
+    set host = excluded.host,
+        port = excluded.port;
+
+    insert into public.email_outbox (to_email, subject, body)
+    values (
+      r.email,
+      'Credențiale VPS - UniFlow',
+      'Curs #' || _course_id || E'\n' ||
+      'Host/IP: ' || _default_host || E'\n' ||
+      'Port: ' || _default_port || E'\n' ||
+      'User: ' || v_username || E'\n' ||
+      'Parola: ' || v_password || E'\n' ||
+      E'\n' ||
+      'Mesaj generat automat (simulat outbox).'
+    );
+  end loop;
+end;
+$$;
+
 -- Courses created by professors
 create table if not exists public.courses (
   id bigserial primary key,
@@ -728,6 +1013,7 @@ $$;
 -- Student RPC: simulate VPS validation (consumes 1 unit)
 create or replace function public.simulate_vps_validation(
   _course_id bigint,
+  _is_valid boolean,
   _note text default null
 )
 returns void
@@ -763,7 +1049,7 @@ begin
   end if;
 
   insert into public.course_vps_validations (course_id, student_id, is_valid, note)
-  values (_course_id, auth.uid(), true, _note);
+  values (_course_id, auth.uid(), coalesce(_is_valid, false), _note);
 
   update public.course_student_resources
   set consumed_amount = consumed_amount + 1
@@ -923,6 +1209,9 @@ begin
     greatest(r.required_per_student, 0),
     0
   from public.course_resource_requirements r
+  join public.course_resource_allocations a
+    on a.course_id = r.course_id
+   and a.resource_type = r.resource_type
   where r.course_id = _course_id
   on conflict (course_id, student_id, resource_type) do update
   set granted_amount = excluded.granted_amount;
@@ -939,6 +1228,9 @@ select
   0
 from public.course_enrollments e
 join public.course_resource_requirements r on r.course_id = e.course_id
+join public.course_resource_allocations a
+  on a.course_id = r.course_id
+ and a.resource_type = r.resource_type
 on conflict (course_id, student_id, resource_type) do update
 set granted_amount = excluded.granted_amount;
 
@@ -1011,6 +1303,10 @@ $$;
 -- ============================================================
 
 alter table public.courses enable row level security;
+alter table public.resource_inventory enable row level security;
+alter table public.admin_activities enable row level security;
+alter table public.vps_credentials enable row level security;
+alter table public.email_outbox enable row level security;
 alter table public.course_resource_requirements enable row level security;
 alter table public.course_enrollments enable row level security;
 alter table public.course_materials enable row level security;
@@ -1022,6 +1318,10 @@ alter table public.course_vps_validations enable row level security;
 alter table public.course_resource_allocations enable row level security;
 
 revoke all on public.courses from anon, authenticated;
+revoke all on public.resource_inventory from anon, authenticated;
+revoke all on public.admin_activities from anon, authenticated;
+revoke all on public.vps_credentials from anon, authenticated;
+revoke all on public.email_outbox from anon, authenticated;
 revoke all on public.course_resource_requirements from anon, authenticated;
 revoke all on public.course_enrollments from anon, authenticated;
 revoke all on public.course_materials from anon, authenticated;
@@ -1033,6 +1333,10 @@ revoke all on public.course_vps_validations from anon, authenticated;
 revoke all on public.course_resource_allocations from anon, authenticated;
 
 grant select, insert, update, delete on public.courses to authenticated;
+grant select on public.resource_inventory to authenticated;
+grant select on public.admin_activities to authenticated;
+grant select on public.vps_credentials to authenticated;
+grant select on public.email_outbox to authenticated;
 grant select, insert, update, delete on public.course_resource_requirements to authenticated;
 grant select on public.course_enrollments to authenticated;
 grant select on public.course_materials to authenticated;
@@ -1045,6 +1349,24 @@ grant select on public.course_resource_allocations to authenticated;
 
 revoke all on function public.enroll_in_course(bigint) from public;
 grant execute on function public.enroll_in_course(bigint) to authenticated;
+
+revoke all on function public.seed_admin_activities_min_10() from public;
+grant execute on function public.seed_admin_activities_min_10() to authenticated;
+
+revoke all on function public.create_admin_activity(text, text, integer) from public;
+grant execute on function public.create_admin_activity(text, text, integer) to authenticated;
+
+revoke all on function public.get_suggested_inventory() from public;
+grant execute on function public.get_suggested_inventory() to authenticated;
+
+revoke all on function public.set_resource_inventory(public.digital_resource_type, integer) from public;
+grant execute on function public.set_resource_inventory(public.digital_resource_type, integer) to authenticated;
+
+revoke all on function public.allocate_course_resources_from_inventory(bigint, public.digital_resource_type, integer) from public;
+grant execute on function public.allocate_course_resources_from_inventory(bigint, public.digital_resource_type, integer) to authenticated;
+
+revoke all on function public.assign_vps_credentials_and_queue_emails(bigint, text, integer) from public;
+grant execute on function public.assign_vps_credentials_and_queue_emails(bigint, text, integer) to authenticated;
 
 revoke all on function public.apply_baseline_grants_for_student(bigint, uuid) from public;
 grant execute on function public.apply_baseline_grants_for_student(bigint, uuid) to authenticated;
@@ -1070,8 +1392,8 @@ grant execute on function public.submit_homework(bigint, text, text) to authenti
 revoke all on function public.simulate_token_usage(bigint, integer, text) from public;
 grant execute on function public.simulate_token_usage(bigint, integer, text) to authenticated;
 
-revoke all on function public.simulate_vps_validation(bigint, text) from public;
-grant execute on function public.simulate_vps_validation(bigint, text) to authenticated;
+revoke all on function public.simulate_vps_validation(bigint, boolean, text) from public;
+grant execute on function public.simulate_vps_validation(bigint, boolean, text) to authenticated;
 
 -- courses: visible to students (open enrollments + enrolled), teacher own, admin all
 drop policy if exists "courses_select_teacher_or_admin" on public.courses;
@@ -1090,6 +1412,48 @@ using (
       and e.student_id = auth.uid()
   )
 );
+
+-- inventory: admin only
+drop policy if exists "resource_inventory_admin_only" on public.resource_inventory;
+create policy "resource_inventory_admin_only"
+on public.resource_inventory
+for select
+to authenticated
+using (public.is_admin(auth.uid()));
+
+-- admin activities: admin only (UI can show count)
+drop policy if exists "admin_activities_admin_only" on public.admin_activities;
+create policy "admin_activities_admin_only"
+on public.admin_activities
+for all
+to authenticated
+using (public.is_admin(auth.uid()))
+with check (public.is_admin(auth.uid()));
+
+-- vps credentials: admin sees all; student sees own; teacher sees for own courses
+drop policy if exists "vps_credentials_select_visible" on public.vps_credentials;
+create policy "vps_credentials_select_visible"
+on public.vps_credentials
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or student_id = auth.uid()
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+-- email outbox: admin only (simulated mail distribution)
+drop policy if exists "email_outbox_admin_only" on public.email_outbox;
+create policy "email_outbox_admin_only"
+on public.email_outbox
+for all
+to authenticated
+using (public.is_admin(auth.uid()))
+with check (public.is_admin(auth.uid()));
 
 drop policy if exists "courses_insert_teacher_or_admin" on public.courses;
 create policy "courses_insert_teacher_or_admin"

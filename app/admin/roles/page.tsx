@@ -28,6 +28,7 @@ type UserRole = {
 export default function AdminRolesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [selectedRoleByUser, setSelectedRoleByUser] = useState<Record<string, number>>({});
+  const [usersLimit, setUsersLimit] = useState<number>(10);
 
   const adminCheckQuery = useQuery({
     queryKey: ["admin-check"],
@@ -51,14 +52,15 @@ export default function AdminRolesPage() {
   });
 
   const rolesDataQuery = useQuery({
-    queryKey: ["admin-roles-data"],
+    queryKey: ["admin-roles-data", { usersLimit }],
     enabled: adminCheckQuery.data?.isAdmin === true,
     queryFn: async () => {
       const [usersRes, rolesRes, userRolesRes] = await Promise.all([
         supabase
           .from("app_users")
           .select("id,email,full_name,created_at")
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .range(0, Math.max(usersLimit - 1, 0)),
         supabase.from("roles").select("id,name,description").order("name", { ascending: true }),
         supabase.from("user_roles").select("user_id,role_id"),
       ]);
@@ -173,124 +175,139 @@ export default function AdminRolesPage() {
         {rolesDataQuery.isLoading ? (
           <p className="text-sm text-muted-foreground">Se incarca utilizatorii...</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[64px] text-center">#</TableHead>
-                <TableHead>Nume</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Roluri</TableHead>
-                <TableHead className="w-[280px]">Actiuni</TableHead>
-              </TableRow>
-            </TableHeader>
+          <>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Afisez <span className="font-mono text-foreground">{users.length}</span> (max {usersLimit}).
+              </p>
+              <button
+                type="button"
+                onClick={() => setUsersLimit((prev) => prev + 10)}
+                className="inline-flex items-center justify-center bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
+              >
+                Incarca inca 10
+              </button>
+            </div>
 
-            <TableBody>
-              {users.length === 0 ? (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
-                    Nu exista utilizatori.
-                  </TableCell>
+                  <TableHead className="w-[64px] text-center">#</TableHead>
+                  <TableHead>Nume</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Roluri</TableHead>
+                  <TableHead className="w-[280px]">Actiuni</TableHead>
                 </TableRow>
-              ) : (
-                users.map((user, idx) => {
-                  const assignedRoleIds = rolesByUser[user.id] ?? [];
-                  const selectedRole = selectedRoleByUser[user.id] ?? roles[0]?.id;
+              </TableHeader>
 
-                  return (
-                    <TableRow key={user.id}>
-                      <TableCell className="text-center font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
+              <TableBody>
+                {users.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
+                      Nu exista utilizatori.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  users.map((user, idx) => {
+                    const assignedRoleIds = rolesByUser[user.id] ?? [];
+                    const selectedRole = selectedRoleByUser[user.id] ?? roles[0]?.id;
 
-                      <TableCell className="min-w-[180px]">
-                        <div className="space-y-0.5">
-                          <p className="text-sm font-medium text-foreground">{user.full_name || "—"}</p>
-                          <p className="font-mono text-[11px] text-muted-foreground">{user.id}</p>
-                        </div>
-                      </TableCell>
+                    return (
+                      <TableRow key={user.id}>
+                        <TableCell className="text-center font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
 
-                      <TableCell className="min-w-[220px] text-sm text-muted-foreground">{user.email}</TableCell>
-
-                      <TableCell className="min-w-[260px]">
-                        <div className="flex flex-wrap gap-2">
-                          {assignedRoleIds.length === 0 ? (
-                            <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-muted-foreground">fara rol</span>
-                          ) : (
-                            assignedRoleIds.map((roleId) => {
-                              const role = roleMap.get(roleId);
-
-                              return (
-                                <button
-                                  key={`${user.id}-${roleId}`}
-                                  type="button"
-                                  onClick={() => mutateRoles.mutate({ action: "revoke", userId: user.id, roleId })}
-                                  disabled={mutateRoles.isPending}
-                                  className="inline-flex items-center gap-1 rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground transition hover:bg-muted/50 disabled:opacity-50"
-                                  title="Click pentru revocare"
-                                >
-                                  <span>{role?.name ?? `rol-${roleId}`}</span>
-                                  <span className="text-muted-foreground">×</span>
-                                </button>
-                              );
-                            })
-                          )}
-                        </div>
-                      </TableCell>
-
-                      <TableCell className="min-w-[280px]">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                          <select
-                            value={selectedRole ?? ""}
-                            onChange={(event) =>
-                              setSelectedRoleByUser((prev) => ({
-                                ...prev,
-                                [user.id]: Number(event.target.value),
-                              }))
-                            }
-                            className="h-10 w-full min-w-[160px] rounded-md border border-input/60 bg-card px-3 text-sm text-foreground outline-none focus:border-ring sm:w-auto"
-                          >
-                            {roles.map((role) => (
-                              <option key={role.id} value={role.id}>
-                                {role.name}
-                              </option>
-                            ))}
-                          </select>
-
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              disabled={mutateRoles.isPending || !selectedRole}
-                              onClick={() =>
-                                selectedRole &&
-                                mutateRoles.mutate({ action: "assign", userId: user.id, roleId: selectedRole })
-                              }
-                              className="h-10 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-                            >
-                              Atribuie
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={mutateRoles.isPending || !selectedRole}
-                              onClick={() => {
-                                if (!selectedRole) return;
-                                const ok = window.confirm(
-                                  "Modificare rol: aceasta actiune va sterge rolurile curente si va seta doar rolul selectat. Continui?"
-                                );
-                                if (!ok) return;
-                                mutateRoles.mutate({ action: "replace", userId: user.id, roleId: selectedRole });
-                              }}
-                              className="h-10 whitespace-nowrap rounded-md bg-muted/30 px-3 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
-                            >
-                              Modifica
-                            </button>
+                        <TableCell className="min-w-[180px]">
+                          <div className="space-y-0.5">
+                            <p className="text-sm font-medium text-foreground">{user.full_name || "—"}</p>
+                            <p className="font-mono text-[11px] text-muted-foreground">{user.id}</p>
                           </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+                        </TableCell>
+
+                        <TableCell className="min-w-[220px] text-sm text-muted-foreground">{user.email}</TableCell>
+
+                        <TableCell className="min-w-[260px]">
+                          <div className="flex flex-wrap gap-2">
+                            {assignedRoleIds.length === 0 ? (
+                              <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-muted-foreground">fara rol</span>
+                            ) : (
+                              assignedRoleIds.map((roleId) => {
+                                const role = roleMap.get(roleId);
+
+                                return (
+                                  <button
+                                    key={`${user.id}-${roleId}`}
+                                    type="button"
+                                    onClick={() => mutateRoles.mutate({ action: "revoke", userId: user.id, roleId })}
+                                    disabled={mutateRoles.isPending}
+                                    className="inline-flex items-center gap-1 rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground transition hover:bg-muted/50 disabled:opacity-50"
+                                    title="Click pentru revocare"
+                                  >
+                                    <span>{role?.name ?? `rol-${roleId}`}</span>
+                                    <span className="text-muted-foreground">×</span>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </TableCell>
+
+                        <TableCell className="min-w-[280px]">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <select
+                              value={selectedRole ?? ""}
+                              onChange={(event) =>
+                                setSelectedRoleByUser((prev) => ({
+                                  ...prev,
+                                  [user.id]: Number(event.target.value),
+                                }))
+                              }
+                              className="h-10 w-full min-w-[160px] rounded-md border border-input/60 bg-card px-3 text-sm text-foreground outline-none focus:border-ring sm:w-auto"
+                            >
+                              {roles.map((role) => (
+                                <option key={role.id} value={role.id}>
+                                  {role.name}
+                                </option>
+                              ))}
+                            </select>
+
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={mutateRoles.isPending || !selectedRole}
+                                onClick={() =>
+                                  selectedRole &&
+                                  mutateRoles.mutate({ action: "assign", userId: user.id, roleId: selectedRole })
+                                }
+                                className="h-10 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+                              >
+                                Atribuie
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={mutateRoles.isPending || !selectedRole}
+                                onClick={() => {
+                                  if (!selectedRole) return;
+                                  const ok = window.confirm(
+                                    "Modificare rol: aceasta actiune va sterge rolurile curente si va seta doar rolul selectat. Continui?"
+                                  );
+                                  if (!ok) return;
+                                  mutateRoles.mutate({ action: "replace", userId: user.id, roleId: selectedRole });
+                                }}
+                                className="h-10 whitespace-nowrap rounded-md bg-muted/30 px-3 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
+                              >
+                                Modifica
+                              </button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </>
         )}
       </section>
     </main>
