@@ -34,7 +34,23 @@ export default function RegisterPage() {
         );
       }
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          await supabase.rpc("audit_log", {
+            _action: "auth_register_password",
+            _entity_table: "auth",
+            _entity_id: user.id,
+            _course_id: null,
+            _message: null,
+            _metadata: { provider: user.app_metadata?.provider ?? null },
+          });
+        }
+      } catch {
+      }
       toast.success("Cont creat cu succes. Te redirectionez...");
       window.location.href = "/";
     },

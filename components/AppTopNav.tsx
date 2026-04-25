@@ -31,7 +31,7 @@ function initials(name: string) {
 export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, isAudit, onSignOut }: AppTopNavProps) {
   async function signOut() {
     await fetch("/api/auth/signout", { method: "POST" });
-    window.location.href = "/";
+    window.location.href = "/login";
   }
 
   return (

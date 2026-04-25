@@ -172,6 +172,12 @@ export default function AdminHomePage() {
                 <span className="text-xs text-muted-foreground">per curs</span>
               </Link>
             </Button>
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/admin/statistici">
+                <span>Statistici</span>
+                <span className="text-xs text-muted-foreground">resurse</span>
+              </Link>
+            </Button>
           </CardContent>
         </Card>
 

@@ -32,6 +32,44 @@ function getActor(a: ActorRow | null | undefined) {
   return a ?? null;
 }
 
+function extractActivityIdsFromText(s: string): number[] {
+  const out: number[] = [];
+  const re = /activity_id=(\d+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) {
+    const id = Number(m[1]);
+    if (Number.isFinite(id) && id > 0) out.push(id);
+  }
+  return out;
+}
+
+function decorateNote(value: unknown, activityTitlesById: Record<string, string>): unknown {
+  if (typeof value !== "string") return value;
+  const ids = extractActivityIdsFromText(value);
+  if (!ids.length) return value;
+  const id = ids[0];
+  const title = activityTitlesById[String(id)];
+  if (!title) return value;
+  return `${value} (${title})`;
+}
+
+function decorateChanges(changes: unknown, activityTitlesById: Record<string, string>): unknown {
+  if (!changes || typeof changes !== "object") return changes;
+  const obj = changes as Record<string, unknown>;
+  if (!("note" in obj)) return changes;
+  const note = obj.note;
+  if (!note || typeof note !== "object") return changes;
+  const noteObj = note as Record<string, unknown>;
+  return {
+    ...obj,
+    note: {
+      ...noteObj,
+      old: decorateNote(noteObj.old, activityTitlesById),
+      new: decorateNote(noteObj.new, activityTitlesById),
+    },
+  };
+}
+
 function getErrorMessage(err: unknown) {
   if (!err) return "Eroare necunoscuta.";
   if (err instanceof Error) return err.message;
@@ -144,7 +182,12 @@ export default function AuditPage() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AuditLogRowWithActor | null>(null);
   const pageSize = 25;
-  const fetchWindow = 500; // how many newest logs we paginate locally
+  const fetchWindow = 500;
+
+  async function signOut() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    window.location.href = "/login";
+  }
 
   const auditCheckQuery = useQuery({
     queryKey: ["audit-check"],
@@ -166,8 +209,6 @@ export default function AuditPage() {
     queryFn: async () => {
       const q = search.trim().toLowerCase();
 
-      // We paginate locally so we can filter noisy timestamp-only updates.
-      // This means the UI reflects the filtered total consistently.
       const res = await supabase
         .from("audit_logs")
         .select("id,created_at,actor_id,action,entity_table,entity_id,course_id,message,metadata", { count: "exact" })
@@ -177,7 +218,6 @@ export default function AuditPage() {
       if (res.error) throw res.error;
       let rows = (res.data ?? []) as AuditLogRow[];
 
-      // Best-effort: fetch actor names/emails. If RLS disallows this, we fall back to actor_id.
       const actorIds = Array.from(new Set(rows.map((r) => r.actor_id).filter((x): x is string => typeof x === "string" && x.length > 0)));
       const actorsById = new Map<string, ActorRow>();
       if (actorIds.length) {
@@ -188,6 +228,36 @@ export default function AuditPage() {
       }
       rows = rows.map((r) => ({ ...r, actor: r.actor_id ? actorsById.get(r.actor_id) ?? null : null })) as AuditLogRowWithActor[];
 
+      const activityIds = new Set<number>();
+      for (const r of rows) {
+        const metaText =
+          typeof r.metadata === "string"
+            ? r.metadata
+            : (() => {
+                try {
+                  return JSON.stringify(r.metadata);
+                } catch {
+                  return "";
+                }
+              })();
+        for (const id of extractActivityIdsFromText(metaText)) activityIds.add(id);
+      }
+
+      const activityTitlesById = new Map<number, string>();
+      const ids = Array.from(activityIds);
+      if (ids.length) {
+        const [courseActsRes, adminActsRes] = await Promise.all([
+          supabase.from("course_activities").select("id,title").in("id", ids),
+          supabase.from("admin_activities").select("id,title").in("id", ids),
+        ]);
+        if (!courseActsRes.error) {
+          for (const a of (courseActsRes.data ?? []) as Array<{ id: number; title: string }>) activityTitlesById.set(a.id, a.title);
+        }
+        if (!adminActsRes.error) {
+          for (const a of (adminActsRes.data ?? []) as Array<{ id: number; title: string }>) activityTitlesById.set(a.id, a.title);
+        }
+      }
+
       if (q) {
         rows = rows.filter((r) => {
           const hay = `${r.action ?? ""} ${r.entity_table ?? ""} ${r.entity_id ?? ""} ${r.course_id ?? ""} ${r.message ?? ""} ${
@@ -197,15 +267,15 @@ export default function AuditPage() {
         });
       }
 
-      const filtered = rows.filter((r) => !isTimestampOnlyUpdate(r.metadata) && !isNoopUpdate(r.metadata));
-      const filteredTotal = filtered.length;
+      const filteredTotal = rows.length;
       const start = (page - 1) * pageSize;
-      const paged = filtered.slice(start, start + pageSize);
+      const paged = rows.slice(start, start + pageSize);
 
       return {
         rows: paged as AuditLogRowWithActor[],
         filteredTotal,
         dbTotal: res.count ?? 0,
+        activityTitlesById: Object.fromEntries(activityTitlesById),
       };
     },
   });
@@ -224,9 +294,17 @@ export default function AuditPage() {
         <section className="w-full max-w-md bg-card p-6">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Acces restrictionat</h1>
           <p className="mt-2 text-sm text-muted-foreground">Trebuie sa fii autentificat pentru aceasta pagina.</p>
-          <Link href="/login" className="mt-5 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
-            Mergi la logare
-          </Link>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button asChild size="sm">
+              <Link href="/login">Logare</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/register">Inregistrare</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/">Inapoi acasa</Link>
+            </Button>
+          </div>
         </section>
       </main>
     );
@@ -238,9 +316,14 @@ export default function AuditPage() {
         <section className="w-full max-w-md bg-card p-6">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Acces interzis</h1>
           <p className="mt-2 text-sm text-muted-foreground">Doar utilizatorii cu rol audit pot accesa jurnalizarea.</p>
-          <Link href="/" className="mt-5 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
-            Inapoi acasa
-          </Link>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={signOut}>
+              Delogare
+            </Button>
+            <Button asChild size="sm">
+              <Link href="/">Inapoi acasa</Link>
+            </Button>
+          </div>
         </section>
       </main>
     );
@@ -249,9 +332,10 @@ export default function AuditPage() {
   const displayRows = (logsQuery.data?.rows ?? []) as AuditLogRowWithActor[];
   const filteredTotal = (logsQuery.data as { filteredTotal?: number } | undefined)?.filteredTotal ?? 0;
   const dbTotal = (logsQuery.data as { dbTotal?: number } | undefined)?.dbTotal ?? 0;
+  const activityTitlesById = (logsQuery.data as { activityTitlesById?: Record<string, string> } | undefined)?.activityTitlesById ?? {};
 
   return (
-    <main className="mx-auto flex w-full max-w-[88rem] flex-1 flex-col px-4 py-10 md:px-8">
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 md:px-6">
       <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Audit</p>
@@ -265,7 +349,7 @@ export default function AuditPage() {
         </Button>
       </header>
 
-      <Card>
+      <Card className="shadow-sm">
         <CardHeader className="space-y-2">
           <CardTitle className="text-lg font-semibold tracking-tight">Audit logs</CardTitle>
           <p className="text-xs text-muted-foreground">
@@ -312,7 +396,8 @@ export default function AuditPage() {
             </div>
           ) : (
             <div className="max-h-[74vh] overflow-auto">
-              <Table>
+              <div className="max-w-full overflow-x-auto">
+                <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/70">
                   <TableRow>
                     <TableHead className="px-5 py-4">Timp</TableHead>
@@ -376,7 +461,8 @@ export default function AuditPage() {
                     );
                   })}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </div>
           )}
         </CardContent>
@@ -419,7 +505,7 @@ export default function AuditPage() {
 
                 {(() => {
                   const changed = getChangedKeys(selected.metadata);
-                  const changes = getChanges(selected.metadata);
+                  const changes = decorateChanges(getChanges(selected.metadata), activityTitlesById);
                   return changed.length ? (
                     <div className="mb-3 rounded-md border border-border/60 bg-muted/10 p-3">
                       <div className="text-xs text-muted-foreground">Changed keys</div>

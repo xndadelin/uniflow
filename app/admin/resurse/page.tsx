@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/Pagination";
+import { Button } from "@/components/ui/button";
 
 function getErrorMessage(err: unknown) {
   if (!err) return "Eroare necunoscuta.";
@@ -76,6 +77,11 @@ function AdminResurseInner() {
   const [activitiesPage, setActivitiesPage] = useState<number>(1);
   const [activitiesPageSize, setActivitiesPageSize] = useState<number>(10);
   const [view, setView] = useState<"activities" | "allocation" | "escalations">("activities");
+
+  async function signOut() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    window.location.href = "/login";
+  }
 
   const adminCheckQuery = useQuery({
     queryKey: ["admin-check"],
@@ -394,9 +400,17 @@ function AdminResurseInner() {
         <section className="w-full max-w-md bg-card p-6">
           <h1 className="font-mono text-xl font-semibold text-foreground">Acces restrictionat</h1>
           <p className="mt-2 text-sm text-muted-foreground">Trebuie sa fii autentificat pentru aceasta pagina.</p>
-          <Link href="/login" className="mt-4 inline-flex bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground">
-            Mergi la logare
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button asChild size="sm">
+              <Link href="/login">Logare</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/register">Inregistrare</Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/">Inapoi acasa</Link>
+            </Button>
+          </div>
         </section>
       </main>
     );
@@ -408,9 +422,14 @@ function AdminResurseInner() {
         <section className="w-full max-w-md bg-card p-6">
           <h1 className="font-mono text-xl font-semibold text-foreground">Acces interzis</h1>
           <p className="mt-2 text-sm text-muted-foreground">Doar utilizatorii cu rol admin pot gestiona resurse.</p>
-          <Link href="/" className="mt-4 inline-flex bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground">
-            Inapoi acasa
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={signOut}>
+              Delogare
+            </Button>
+            <Button asChild size="sm">
+              <Link href="/">Inapoi acasa</Link>
+            </Button>
+          </div>
         </section>
       </main>
     );

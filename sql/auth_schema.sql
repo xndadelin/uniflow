@@ -657,17 +657,17 @@ declare
   v_key text;
   v_changed_keys text[];
   v_changes jsonb := '{}'::jsonb;
+  v_pk_cols text[];
+  v_pk jsonb := '{}'::jsonb;
 begin
   v_action := lower(tg_table_name) || '_' || lower(tg_op);
   v_new := case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) else null end;
   v_old := case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) else null end;
 
-  -- Skip noisy UPDATEs that don't actually change anything (e.g. UPDATE ... SET col = col).
   if tg_op = 'UPDATE' and v_new = v_old then
     return new;
   end if;
 
-  -- Compute changed fields for UPDATE to make diffs obvious in UI.
   if tg_op = 'UPDATE' then
     v_changed_keys := array[]::text[];
     for v_key in
@@ -689,7 +689,6 @@ begin
       end if;
     end loop;
 
-    -- Drop noisy system timestamps. If only these changed, skip logging.
     v_changed_keys := array_remove(v_changed_keys, 'updated_at');
     v_changed_keys := array_remove(v_changed_keys, 'allocated_at');
     v_changed_keys := array_remove(v_changed_keys, 'created_at');
@@ -699,14 +698,36 @@ begin
     end if;
   end if;
 
-  -- Best-effort entity id
-  v_entity_id := coalesce(
-    (v_new ->> 'id'),
-    (v_old ->> 'id'),
-    null
-  );
+  v_entity_id := coalesce((v_new ->> 'id'), (v_old ->> 'id'), null);
 
-  -- Best-effort course_id
+  if v_entity_id is null then
+    select array_agg(a.attname order by x.ord) into v_pk_cols
+    from (
+      select unnest(i.indkey) as attnum, generate_subscripts(i.indkey, 1) as ord
+      from pg_index i
+      where i.indrelid = tg_relid
+        and i.indisprimary
+      limit 1
+    ) x
+    join pg_attribute a
+      on a.attrelid = tg_relid
+     and a.attnum = x.attnum
+    where a.attnum > 0
+      and not a.attisdropped;
+
+    if v_pk_cols is not null and array_length(v_pk_cols, 1) > 0 then
+      foreach v_key in array v_pk_cols loop
+        v_pk := v_pk || jsonb_build_object(v_key, coalesce(v_new ->> v_key, v_old ->> v_key));
+      end loop;
+
+      if array_length(v_pk_cols, 1) = 1 then
+        v_entity_id := v_pk ->> v_pk_cols[1];
+      else
+        v_entity_id := v_pk::text;
+      end if;
+    end if;
+  end if;
+
   v_course_id := nullif(coalesce((v_new ->> 'course_id'), (v_old ->> 'course_id')), '')::bigint;
 
   perform public.audit_log(
