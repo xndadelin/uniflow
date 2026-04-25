@@ -1,8 +1,5 @@
--- UniFlow auth domain schema for Supabase Postgres
--- Uses Supabase auth.users as source of truth for credentials.
--- This schema keeps app-level users and roles in separate tables.
 
--- 1) Roles catalog (separate from users)
+
 create table if not exists public.roles (
   id bigserial primary key,
   name text not null unique,
@@ -10,7 +7,7 @@ create table if not exists public.roles (
   created_at timestamptz not null default now()
 );
 
--- 2) App users table (separate from roles)
+
 create table if not exists public.app_users (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
@@ -20,7 +17,7 @@ create table if not exists public.app_users (
   updated_at timestamptz not null default now()
 );
 
--- 3) Join table for many-to-many user-role mapping
+
 create table if not exists public.user_roles (
   user_id uuid not null references public.app_users(id) on delete cascade,
   role_id bigint not null references public.roles(id) on delete restrict,
@@ -32,7 +29,7 @@ create table if not exists public.user_roles (
 create index if not exists user_roles_user_idx on public.user_roles(user_id);
 create index if not exists user_roles_role_idx on public.user_roles(role_id);
 
--- Keep updated_at fresh on updates
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -40,15 +37,14 @@ as $$
 begin
   new.updated_at = now();
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists app_users_set_updated_at on public.app_users;
 create trigger app_users_set_updated_at
 before update on public.app_users
 for each row execute function public.set_updated_at();
 
--- Create app user row when a new auth user is created
+
 create or replace function public.handle_new_auth_user()
 returns trigger
 language plpgsql
@@ -66,15 +62,14 @@ begin
   on conflict (id) do nothing;
 
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_auth_user();
 
--- Seed baseline roles
+
 insert into public.roles (name, description)
 values
   ('student', 'Student user role'),
@@ -83,7 +78,7 @@ values
   ('audit', 'Read-only auditor role')
 on conflict (name) do nothing;
 
--- Assign default "student" role to every new app user
+
 create or replace function public.assign_default_role()
 returns trigger
 language plpgsql
@@ -97,7 +92,7 @@ begin
   from public.roles
   where name = 'student';
 
-  -- Backward compatibility if a previous schema used 'user'
+
   if default_role_id is null then
     select id into default_role_id
     from public.roles
@@ -111,17 +106,14 @@ begin
   end if;
 
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists on_app_user_created_assign_role on public.app_users;
 create trigger on_app_user_created_assign_role
 after insert on public.app_users
 for each row execute function public.assign_default_role();
 
--- 4) Row Level Security (strict policies)
 
--- Helper: checks if a user has admin role
 create or replace function public.is_admin(_user_id uuid default auth.uid())
 returns boolean
 language sql
@@ -135,25 +127,24 @@ as $$
     join public.roles r on r.id = ur.role_id
     where ur.user_id = _user_id
       and r.name = 'admin'
-  );
-$$;
+  );$$;
 
--- Enable RLS
+
 alter table public.roles enable row level security;
 alter table public.app_users enable row level security;
 alter table public.user_roles enable row level security;
 
--- Lock down default grants first (RLS + least privilege)
+
 revoke all on public.roles from anon, authenticated;
 revoke all on public.app_users from anon, authenticated;
 revoke all on public.user_roles from anon, authenticated;
 
--- Minimal table grants for authenticated users
+
 grant select on public.roles to authenticated;
 grant select, update on public.app_users to authenticated;
 grant select, insert, update, delete on public.user_roles to authenticated;
 
--- ----- roles policies -----
+
 drop policy if exists "roles_select_authenticated" on public.roles;
 create policy "roles_select_authenticated"
 on public.roles
@@ -169,7 +160,7 @@ to authenticated
 using (public.is_admin(auth.uid()))
 with check (public.is_admin(auth.uid()));
 
--- ----- app_users policies -----
+
 drop policy if exists "app_users_select_self_or_admin" on public.app_users;
 create policy "app_users_select_self_or_admin"
 on public.app_users
@@ -234,10 +225,7 @@ for delete
 to authenticated
 using (public.is_admin(auth.uid()));
 
--- No direct inserts by authenticated users.
--- Rows are created via trigger from auth.users (security definer).
 
--- ----- user_roles policies -----
 drop policy if exists "user_roles_select_self_or_admin" on public.user_roles;
 create policy "user_roles_select_self_or_admin"
 on public.user_roles
@@ -270,7 +258,7 @@ for delete
 to authenticated
 using (public.is_admin(auth.uid()));
 
--- Protect system from accidental lockout: never remove the last admin role
+
 create or replace function public.prevent_last_admin_role_removal()
 returns trigger
 language plpgsql
@@ -310,8 +298,7 @@ begin
   end if;
 
   return coalesce(new, old);
-end;
-$$;
+end;$$;
 
 drop trigger if exists user_roles_protect_last_admin_delete on public.user_roles;
 create trigger user_roles_protect_last_admin_delete
@@ -323,11 +310,7 @@ create trigger user_roles_protect_last_admin_update
 before update on public.user_roles
 for each row execute function public.prevent_last_admin_role_removal();
 
--- ============================================================
--- UniFlow courses + digital resources domain (teacher/admin)
--- ============================================================
 
--- Helper: checks if a user has profesor role
 create or replace function public.is_profesor(_user_id uuid default auth.uid())
 returns boolean
 language sql
@@ -341,10 +324,9 @@ as $$
     join public.roles r on r.id = ur.role_id
     where ur.user_id = _user_id
       and r.name = 'profesor'
-  );
-$$;
+  );$$;
 
--- Helper: checks if a user has audit role
+
 create or replace function public.is_audit(_user_id uuid default auth.uid())
 returns boolean
 language sql
@@ -358,12 +340,8 @@ as $$
     join public.roles r on r.id = ur.role_id
     where ur.user_id = _user_id
       and r.name = 'audit'
-  );
-$$;
+  );$$;
 
--- ============================================================
--- Audit logging (jurnalizare)
--- ============================================================
 
 create table if not exists public.audit_logs (
   id bigserial primary key,
@@ -395,7 +373,6 @@ using (
   or public.is_audit(auth.uid())
 );
 
--- Only system functions/triggers should insert logs (no direct inserts from clients).
 
 create or replace function public.audit_log(
   _action text,
@@ -445,8 +422,7 @@ begin
     coalesce(_metadata, '{}'::jsonb) ||
       case when v_request <> '{}'::jsonb then jsonb_build_object('request', v_request) else '{}'::jsonb end
   );
-end;
-$$;
+end;$$;
 
 create or replace function public.trg_audit_user_roles()
 returns trigger
@@ -480,8 +456,7 @@ begin
   end if;
 
   return coalesce(new, old);
-end;
-$$;
+end;$$;
 
 drop trigger if exists audit_user_roles_ins on public.user_roles;
 create trigger audit_user_roles_ins
@@ -530,8 +505,7 @@ begin
   );
 
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists audit_course_resource_requests_ins on public.course_resource_requests;
 create trigger audit_course_resource_requests_ins
@@ -562,8 +536,7 @@ begin
     return new;
   end if;
   return coalesce(new, old);
-end;
-$$;
+end;$$;
 
 drop trigger if exists audit_course_materials_ins on public.course_materials;
 create trigger audit_course_materials_ins
@@ -589,8 +562,7 @@ begin
     return new;
   end if;
   return coalesce(new, old);
-end;
-$$;
+end;$$;
 
 drop trigger if exists audit_course_homework_assignments_ins on public.course_homework_assignments;
 create trigger audit_course_homework_assignments_ins
@@ -628,8 +600,7 @@ begin
   );
 
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists audit_course_homework_submissions_v2_ins on public.course_homework_submissions_v2;
 create trigger audit_course_homework_submissions_v2_ins
@@ -641,7 +612,7 @@ create trigger audit_course_homework_submissions_v2_upd
 after update on public.course_homework_submissions_v2
 for each row execute function public.trg_audit_homework_submissions_v2();
 
--- Generic audit trigger for broad coverage (INSERT/UPDATE/DELETE)
+
 create or replace function public.trg_audit_generic()
 returns trigger
 language plpgsql
@@ -747,11 +718,9 @@ begin
   );
 
   return coalesce(new, old);
-end;
-$$;
+end;$$;
 
--- Attach generic audit triggers to "everything" important.
--- (We keep the specific triggers above; this ensures we don't miss actions.)
+
 drop trigger if exists audit_roles_all on public.roles;
 create trigger audit_roles_all
 after insert or update or delete on public.roles
@@ -762,7 +731,7 @@ create trigger audit_app_users_all
 after insert or update or delete on public.app_users
 for each row execute function public.trg_audit_generic();
 
--- user_roles already has dedicated insert/delete logs; still log updates via generic
+
 drop trigger if exists audit_user_roles_upd_generic on public.user_roles;
 create trigger audit_user_roles_upd_generic
 after update on public.user_roles
@@ -813,7 +782,7 @@ create trigger audit_course_enrollments_all
 after insert or update or delete on public.course_enrollments
 for each row execute function public.trg_audit_generic();
 
--- course_materials has dedicated insert log; still cover update/delete
+
 drop trigger if exists audit_course_materials_upd_del_generic on public.course_materials;
 create trigger audit_course_materials_upd_del_generic
 after update or delete on public.course_materials
@@ -824,7 +793,7 @@ create trigger audit_course_student_resources_all
 after insert or update or delete on public.course_student_resources
 for each row execute function public.trg_audit_generic();
 
--- course_resource_requests has dedicated insert/update log; still cover delete
+
 drop trigger if exists audit_course_resource_requests_del_generic on public.course_resource_requests;
 create trigger audit_course_resource_requests_del_generic
 after delete on public.course_resource_requests
@@ -835,7 +804,7 @@ create trigger audit_course_homework_submissions_all
 after insert or update or delete on public.course_homework_submissions
 for each row execute function public.trg_audit_generic();
 
--- course_homework_assignments has dedicated insert log; still cover update/delete
+
 drop trigger if exists audit_course_homework_assignments_upd_del_generic on public.course_homework_assignments;
 create trigger audit_course_homework_assignments_upd_del_generic
 after update or delete on public.course_homework_assignments
@@ -846,7 +815,7 @@ create trigger audit_course_homework_assignment_files_all
 after insert or update or delete on public.course_homework_assignment_files
 for each row execute function public.trg_audit_generic();
 
--- course_homework_submissions_v2 has dedicated insert/update log; still cover delete
+
 drop trigger if exists audit_course_homework_submissions_v2_del_generic on public.course_homework_submissions_v2;
 create trigger audit_course_homework_submissions_v2_del_generic
 after delete on public.course_homework_submissions_v2
@@ -872,19 +841,15 @@ create trigger audit_course_resource_allocations_all
 after insert or update or delete on public.course_resource_allocations
 for each row execute function public.trg_audit_generic();
 
--- Resource types used across the app
+
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'digital_resource_type') then
     create type public.digital_resource_type as enum ('tokens', 'vps_subscription');
   end if;
-end $$;
+end$$;
 
--- ============================================================
--- Admin domain (inventory, activities, vps credentials email outbox)
--- ============================================================
 
--- Global inventory for digital resources (admin managed)
 create table if not exists public.resource_inventory (
   resource_type public.digital_resource_type primary key,
   total_amount integer not null default 0 check (total_amount >= 0),
@@ -897,12 +862,12 @@ create trigger resource_inventory_set_updated_at
 before update on public.resource_inventory
 for each row execute function public.set_updated_at();
 
--- Seed inventory rows for both resource types (idempotent)
+
 insert into public.resource_inventory (resource_type, total_amount, remaining_amount)
 values ('tokens', 0, 0), ('vps_subscription', 0, 0)
 on conflict (resource_type) do nothing;
 
--- Admin activities (minimum 10 required for grading)
+
 create table if not exists public.admin_activities (
   id bigserial primary key,
   title text not null,
@@ -911,11 +876,10 @@ create table if not exists public.admin_activities (
   created_at timestamptz not null default now()
 );
 
--- Ensure activity titles are unique (needed for upsert/seed by title)
+
 create unique index if not exists admin_activities_title_uidx on public.admin_activities (title);
 
--- Seed default catalog (idempotent) so it exists "by default", without pressing a button.
--- Also removes old placeholder rows used in earlier iterations.
+
 delete from public.admin_activities
 where title ~ '^Activitate [0-9]+$'
   and coalesce(description, '') = 'Seed pentru punctaj'
@@ -939,9 +903,7 @@ set description = excluded.description,
 where public.admin_activities.description is distinct from excluded.description
    or public.admin_activities.token_cost is distinct from excluded.token_cost;
 
--- ============================================================
--- Course-scoped activities (token consumption catalog per course)
--- ============================================================
+
 create table if not exists public.course_activities (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -954,7 +916,7 @@ create table if not exists public.course_activities (
 
 create index if not exists course_activities_course_idx on public.course_activities(course_id);
 
--- Seed defaults for every new course (idempotent per course)
+
 create or replace function public.seed_course_activities_defaults(_course_id bigint)
 returns void
 language plpgsql
@@ -983,10 +945,9 @@ begin
       token_cost = excluded.token_cost
   where public.course_activities.description is distinct from excluded.description
      or public.course_activities.token_cost is distinct from excluded.token_cost;
-end;
-$$;
+end;$$;
 
--- Optional helper: called after course creation to seed defaults automatically.
+
 create or replace function public.handle_new_course_seed_activities()
 returns trigger
 language plpgsql
@@ -994,7 +955,7 @@ security definer
 set search_path = public
 as $$
 begin
-  -- We cannot rely on auth.uid() inside trigger the same way; allow seeding without admin check here.
+
   insert into public.course_activities (course_id, title, description, token_cost)
   values
     (new.id, 'Rezumat text', 'Rezumat/explicare text cu AI', 10),
@@ -1014,8 +975,7 @@ begin
      or public.course_activities.token_cost is distinct from excluded.token_cost;
 
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists on_course_created_seed_activities on public.courses;
 create trigger on_course_created_seed_activities
@@ -1053,10 +1013,9 @@ begin
       token_cost = excluded.token_cost
   where public.course_activities.description is distinct from excluded.description
      or public.course_activities.token_cost is distinct from excluded.token_cost;
-end;
-$$;
+end;$$;
 
--- Student RPC: consume tokens based on a course activity definition
+
 create or replace function public.consume_tokens_for_activity(
   _course_id bigint,
   _activity_id bigint,
@@ -1112,10 +1071,9 @@ begin
   where course_id = _course_id
     and student_id = auth.uid()
     and resource_type = 'tokens';
-end;
-$$;
+end;$$;
 
--- Migration helper (idempotent)
+
 alter table public.admin_activities
   add column if not exists token_cost integer not null default 0;
 
@@ -1130,13 +1088,13 @@ begin
     raise exception 'Doar admin poate popula activitati.';
   end if;
 
-  -- Cleanup old placeholder seed rows (so defaults show up nicely in UI).
+
   delete from public.admin_activities
   where title ~ '^Activitate [0-9]+$'
     and coalesce(description, '') = 'Seed pentru punctaj'
     and token_cost = 0;
 
-  -- Ensure the default catalog exists (idempotent; updates values if they already exist).
+
   insert into public.admin_activities (title, description, token_cost)
   values
     ('Rezumat text', 'Rezumat/explicare text cu AI', 10),
@@ -1154,10 +1112,9 @@ begin
       token_cost = excluded.token_cost
   where public.admin_activities.description is distinct from excluded.description
      or public.admin_activities.token_cost is distinct from excluded.token_cost;
-end;
-$$;
+end;$$;
 
--- Admin RPC: add an activity with token cost
+
 create or replace function public.create_admin_activity(
   _title text,
   _description text,
@@ -1183,10 +1140,9 @@ begin
 
   insert into public.admin_activities (title, description, token_cost)
   values (trim(_title), nullif(trim(_description), ''), _token_cost);
-end;
-$$;
+end;$$;
 
--- Admin RPC: compute required totals from professor requirements and max_students, plus >=10% extra.
+
 create or replace function public.get_suggested_inventory()
 returns table (
   resource_type public.digital_resource_type,
@@ -1210,10 +1166,9 @@ as $$
   from public.course_resource_requirements r
   join public.courses c on c.id = r.course_id
   group by r.resource_type
-  order by r.resource_type;
-$$;
+  order by r.resource_type;$$;
 
--- VPS credentials per student (assigned by admin, can be "sent" via outbox)
+
 create table if not exists public.vps_credentials (
   id bigserial primary key,
   course_id bigint references public.courses(id) on delete cascade,
@@ -1226,7 +1181,7 @@ create table if not exists public.vps_credentials (
   unique (course_id, student_id)
 );
 
--- Email outbox (simulated mail distribution)
+
 create table if not exists public.email_outbox (
   id bigserial primary key,
   to_email text not null,
@@ -1236,7 +1191,7 @@ create table if not exists public.email_outbox (
   sent_at timestamptz
 );
 
--- Token table for "consume VPS subscription via email link"
+
 create table if not exists public.vps_email_validation_tokens (
   token uuid primary key default gen_random_uuid(),
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -1249,7 +1204,7 @@ create table if not exists public.vps_email_validation_tokens (
 create index if not exists vps_email_validation_tokens_course_idx on public.vps_email_validation_tokens(course_id);
 create index if not exists vps_email_validation_tokens_student_idx on public.vps_email_validation_tokens(student_id);
 
--- Admin RPC: set inventory totals (remaining is reset to total)
+
 create or replace function public.set_resource_inventory(
   _resource_type public.digital_resource_type,
   _total integer
@@ -1272,10 +1227,9 @@ begin
       updated_at = now()
   where public.resource_inventory.total_amount is distinct from excluded.total_amount
      or public.resource_inventory.remaining_amount is distinct from excluded.remaining_amount;
-end;
-$$;
+end;$$;
 
--- Admin RPC: allocate course resources AND subtract from global inventory (tokens/VPS)
+
 create or replace function public.allocate_course_resources_from_inventory(
   _course_id bigint,
   _resource_type public.digital_resource_type,
@@ -1310,10 +1264,9 @@ begin
   where resource_type = _resource_type;
 
   perform public.allocate_course_resources(_course_id, _resource_type, _allocated_amount);
-end;
-$$;
+end;$$;
 
--- Admin RPC: assign VPS credentials to enrolled students and queue emails (outbox)
+
 create or replace function public.assign_vps_credentials_and_queue_emails(
   _course_id bigint,
   _default_host text,
@@ -1346,7 +1299,7 @@ begin
     join public.app_users u on u.id = e.student_id
     where e.course_id = _course_id
   loop
-    -- Create credential if missing (simple deterministic username/password for demo; replace in production)
+
     v_username := 'student_' || left(r.student_id::text, 8);
     v_password := left(md5(r.student_id::text), 12);
 
@@ -1377,8 +1330,7 @@ begin
       'Nota: In platforma, sectiunea VPS poate rula validarea automat si consuma 1 abonament.'
     );
   end loop;
-end;
-$$;
+end;$$;
 
 create or replace function public.consume_vps_validation_from_token(
   _token uuid,
@@ -1446,10 +1398,9 @@ begin
   update public.vps_email_validation_tokens
   set used_at = now()
   where token = _token;
-end;
-$$;
+end;$$;
 
--- Courses created by professors
+
 create table if not exists public.courses (
   id bigserial primary key,
   teacher_id uuid not null references public.app_users(id) on delete restrict,
@@ -1463,7 +1414,7 @@ create table if not exists public.courses (
 
 create index if not exists courses_teacher_idx on public.courses(teacher_id);
 
--- Migration helper for existing DBs (idempotent)
+
 alter table public.courses
   add column if not exists enrollment_open boolean not null default true;
 
@@ -1472,13 +1423,13 @@ create trigger courses_set_updated_at
 before update on public.courses
 for each row execute function public.set_updated_at();
 
--- Requirements declared by professor when creating course
+
 create table if not exists public.course_resource_requirements (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
   resource_type public.digital_resource_type not null,
-  -- New model: resources required per student (used to derive total needed for the course).
-  -- Backward compatibility: keep required_amount for older deployments.
+
+
   required_per_student integer not null default 0 check (required_per_student >= 0),
   required_amount integer not null check (required_amount >= 0),
   created_at timestamptz not null default now(),
@@ -1487,11 +1438,11 @@ create table if not exists public.course_resource_requirements (
 
 create index if not exists course_requirements_course_idx on public.course_resource_requirements(course_id);
 
--- Migration helper for existing DBs (idempotent)
+
 alter table public.course_resource_requirements
   add column if not exists required_per_student integer not null default 0;
 
--- Students enrolled to courses
+
 create table if not exists public.course_enrollments (
   course_id bigint not null references public.courses(id) on delete cascade,
   student_id uuid not null references public.app_users(id) on delete cascade,
@@ -1501,7 +1452,7 @@ create table if not exists public.course_enrollments (
 
 create index if not exists course_enrollments_student_idx on public.course_enrollments(student_id);
 
--- Auto-apply baseline grants whenever an enrollment is created (covers inserts not going through RPC).
+
 create or replace function public.handle_new_course_enrollment_apply_baseline()
 returns trigger
 language plpgsql
@@ -1511,19 +1462,14 @@ as $$
 begin
   perform public.apply_baseline_grants_for_student(new.course_id, new.student_id);
   return new;
-end;
-$$;
+end;$$;
 
 drop trigger if exists on_course_enrollment_created_apply_baseline on public.course_enrollments;
 create trigger on_course_enrollment_created_apply_baseline
 after insert on public.course_enrollments
 for each row execute function public.handle_new_course_enrollment_apply_baseline();
 
--- ============================================================
--- Course page domain (materials, student resources, requests, homework, simulations)
--- ============================================================
 
--- Materials uploaded by teacher for a course
 create table if not exists public.course_materials (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -1536,7 +1482,7 @@ create table if not exists public.course_materials (
 
 create index if not exists course_materials_course_idx on public.course_materials(course_id);
 
--- Student resources ledger per course (granted - consumed = remaining)
+
 create table if not exists public.course_student_resources (
   course_id bigint not null references public.courses(id) on delete cascade,
   student_id uuid not null references public.app_users(id) on delete cascade,
@@ -1554,21 +1500,21 @@ create trigger course_student_resources_set_updated_at
 before update on public.course_student_resources
 for each row execute function public.set_updated_at();
 
--- Requests for extra resources (student -> teacher pool)
+
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'course_resource_request_status') then
     create type public.course_resource_request_status as enum ('pending', 'approved', 'rejected');
   else
-    -- Add escalation state if schema already exists
+
     begin
       alter type public.course_resource_request_status add value if not exists 'escalated';
     exception when others then
-      -- ignore if not supported on older versions
+
       null;
     end;
   end if;
-end $$;
+end$$;
 
 create table if not exists public.course_resource_requests (
   id bigserial primary key,
@@ -1592,7 +1538,7 @@ alter table public.course_resource_requests
 create index if not exists course_resource_requests_course_idx on public.course_resource_requests(course_id);
 create index if not exists course_resource_requests_student_idx on public.course_resource_requests(student_id);
 
--- Homework uploads (student submissions)
+
 create table if not exists public.course_homework_submissions (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -1605,9 +1551,6 @@ create table if not exists public.course_homework_submissions (
 create index if not exists course_homework_course_idx on public.course_homework_submissions(course_id);
 create index if not exists course_homework_student_idx on public.course_homework_submissions(student_id);
 
--- ============================================================
--- Homework v2: assignments created by teacher + student submissions (multiple files)
--- ============================================================
 
 create table if not exists public.course_homework_assignments (
   id bigserial primary key,
@@ -1654,7 +1597,7 @@ create table if not exists public.course_homework_submission_files (
 
 create index if not exists course_homework_submission_files_submission_idx on public.course_homework_submission_files(submission_id);
 
--- Token consumption simulation activities
+
 create table if not exists public.course_token_activities (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -1667,7 +1610,7 @@ create table if not exists public.course_token_activities (
 create index if not exists course_token_activities_course_idx on public.course_token_activities(course_id);
 create index if not exists course_token_activities_student_idx on public.course_token_activities(student_id);
 
--- VPS validation simulation
+
 create table if not exists public.course_vps_validations (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -1680,7 +1623,7 @@ create table if not exists public.course_vps_validations (
 create index if not exists course_vps_validations_course_idx on public.course_vps_validations(course_id);
 create index if not exists course_vps_validations_student_idx on public.course_vps_validations(student_id);
 
--- Helper: check enrollment
+
 create or replace function public.is_enrolled_in_course(_course_id bigint, _student_id uuid default auth.uid())
 returns boolean
 language sql
@@ -1693,10 +1636,9 @@ as $$
     from public.course_enrollments e
     where e.course_id = _course_id
       and e.student_id = _student_id
-  );
-$$;
+  );$$;
 
--- Student RPC: request extra resources
+
 create or replace function public.request_course_resources(
   _course_id bigint,
   _resource_type public.digital_resource_type,
@@ -1722,10 +1664,9 @@ begin
 
   insert into public.course_resource_requests (course_id, student_id, resource_type, requested_amount)
   values (_course_id, auth.uid(), _resource_type, _requested_amount);
-end;
-$$;
+end;$$;
 
--- Teacher/admin RPC: approve request and grant from professor bonus pool (10%)
+
 create or replace function public.approve_course_resource_request(_request_id bigint)
 returns void
 language plpgsql
@@ -1790,10 +1731,9 @@ begin
       decided_by = auth.uid(),
       decided_at = now()
   where id = _request_id;
-end;
-$$;
+end;$$;
 
--- Teacher RPC: escalate request to admin (when professor bonus is insufficient)
+
 create or replace function public.escalate_course_resource_request(_request_id bigint)
 returns void
 language plpgsql
@@ -1830,10 +1770,9 @@ begin
       escalated_by = auth.uid(),
       escalated_at = now()
   where id = _request_id;
-end;
-$$;
+end;$$;
 
--- Admin RPC: approve an escalated request by granting from global inventory (resource_inventory)
+
 create or replace function public.admin_approve_escalated_course_resource_request(_request_id bigint)
 returns void
 language plpgsql
@@ -1887,10 +1826,9 @@ begin
       decided_by = auth.uid(),
       decided_at = now()
   where id = _request_id;
-end;
-$$;
+end;$$;
 
--- Teacher/admin RPC: reject request
+
 create or replace function public.reject_course_resource_request(_request_id bigint)
 returns void
 language plpgsql
@@ -1927,10 +1865,9 @@ begin
       decided_by = auth.uid(),
       decided_at = now()
   where id = _request_id;
-end;
-$$;
+end;$$;
 
--- Student RPC: upload homework link (file_url)
+
 create or replace function public.submit_homework(
   _course_id bigint,
   _title text,
@@ -1960,10 +1897,9 @@ begin
 
   insert into public.course_homework_submissions (course_id, student_id, title, file_url)
   values (_course_id, auth.uid(), trim(_title), trim(_file_url));
-end;
-$$;
+end;$$;
 
--- Teacher/admin RPC: create homework assignment (v2)
+
 create or replace function public.create_homework_assignment(
   _course_id bigint,
   _title text,
@@ -2004,10 +1940,9 @@ begin
   returning id into v_id;
 
   return v_id;
-end;
-$$;
+end;$$;
 
--- Student RPC: submit homework for assignment (v2); creates/updates single submission per assignment
+
 create or replace function public.submit_homework_assignment(
   _assignment_id bigint,
   _link_url text default null
@@ -2042,10 +1977,9 @@ begin
   set link_url = excluded.link_url,
       created_at = now()
   where public.course_homework_submissions_v2.link_url is distinct from excluded.link_url;
-end;
-$$;
+end;$$;
 
--- Student RPC: simulate token usage (consumes from remaining)
+
 create or replace function public.simulate_token_usage(
   _course_id bigint,
   _tokens_used integer,
@@ -2095,10 +2029,9 @@ begin
   where course_id = _course_id
     and student_id = auth.uid()
     and resource_type = 'tokens';
-end;
-$$;
+end;$$;
 
--- Student RPC: simulate VPS validation (consumes 1 unit)
+
 create or replace function public.simulate_vps_validation(
   _course_id bigint,
   _is_valid boolean,
@@ -2144,11 +2077,9 @@ begin
   where course_id = _course_id
     and student_id = auth.uid()
     and resource_type = 'vps_subscription';
-end;
-$$;
+end;$$;
 
--- Resources allocated by admin to a course.
--- professor_bonus_amount is always 10% of required_amount (rounded up) at allocation time.
+
 create table if not exists public.course_resource_allocations (
   id bigserial primary key,
   course_id bigint not null references public.courses(id) on delete cascade,
@@ -2163,7 +2094,7 @@ create table if not exists public.course_resource_allocations (
 
 create index if not exists course_allocations_course_idx on public.course_resource_allocations(course_id);
 
--- Student RPC: enroll in a course if enrollment is open and capacity allows
+
 create or replace function public.enroll_in_course(_course_id bigint)
 returns void
 language plpgsql
@@ -2203,12 +2134,11 @@ begin
   values (_course_id, auth.uid())
   on conflict (course_id, student_id) do nothing;
 
-  -- Auto-distribute baseline per-student resources on enrollment (if requirements exist).
-  perform public.apply_baseline_grants_for_student(_course_id, auth.uid());
-end;
-$$;
 
--- Admin RPC: allocate resources for course + auto-grant 10% bonus to professor pool
+  perform public.apply_baseline_grants_for_student(_course_id, auth.uid());
+end;$$;
+
+
 create or replace function public.allocate_course_resources(
   _course_id bigint,
   _resource_type public.digital_resource_type,
@@ -2227,8 +2157,7 @@ begin
     raise exception 'Doar admin poate aloca resurse.';
   end if;
 
-  -- Total needed is derived from per-student requirement * max_students.
-  -- If older column is used, fall back to required_amount.
+
   select
     coalesce((r.required_per_student * c.max_students), r.required_amount) into req
   from public.course_resource_requirements r
@@ -2240,9 +2169,7 @@ begin
     raise exception 'Nu exista cerinta de resurse pentru acest tip.';
   end if;
 
-  -- Bonus profesor: mereu 10% din necesarul cursului (rotunjit in sus).
-  -- Important: la re-alocare nu resetam bonusul ramas; il ajustam doar cu diferenta
-  -- daca se modifica necesarul (si implicit bonusul).
+
   bonus := (((req::numeric) * 10) + 99) / 100 ::int;
 
   insert into public.course_resource_allocations (
@@ -2275,13 +2202,11 @@ begin
      or public.course_resource_allocations.professor_bonus_amount is distinct from excluded.professor_bonus_amount
      or public.course_resource_allocations.allocated_by is distinct from excluded.allocated_by;
 
-  -- Auto-distribute to currently enrolled students, based on per-student requirement.
-  perform public.distribute_course_resources_to_students(_course_id, _resource_type);
-end;
-$$;
 
--- Baseline grants for a student based on professor requirements (per student).
--- Called automatically on enrollment, and can be reused by other flows.
+  perform public.distribute_course_resources_to_students(_course_id, _resource_type);
+end;$$;
+
+
 create or replace function public.apply_baseline_grants_for_student(
   _course_id bigint,
   _student_id uuid
@@ -2305,7 +2230,7 @@ begin
      and a.resource_type = r.resource_type
     where r.course_id = _course_id
   loop
-    -- enrolled count is per course; used to compute uniform per-student grant under partial allocation
+
     select count(*) into enrolled_count
     from public.course_enrollments
     where course_id = _course_id;
@@ -2330,10 +2255,9 @@ begin
     on conflict (course_id, student_id, resource_type) do update
     set granted_amount = excluded.granted_amount;
   end loop;
-end;
-$$;
+end;$$;
 
--- Backfill: ensure baseline grants exist for all current enrollments (idempotent).
+
 insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
 select
   e.course_id,
@@ -2355,8 +2279,7 @@ join public.course_resource_allocations a
 on conflict (course_id, student_id, resource_type) do update
 set granted_amount = excluded.granted_amount;
 
--- Admin RPC: distribute allocated resources to enrolled students based on professor requirements (per student).
--- This sets/updates the baseline "granted_amount" for each enrolled student for a given course + resource_type.
+
 create or replace function public.distribute_course_resources_to_students(
   _course_id bigint,
   _resource_type public.digital_resource_type
@@ -2401,11 +2324,11 @@ begin
   if coalesce(enrolled_count, 0) <= 0 then
     grant_per_student := 0;
   else
-    -- Best effort: distribute uniformly up to professor requirement.
+
     grant_per_student := least(greatest(per_student, 0), floor((greatest(allocated, 0)::numeric) / enrolled_count)::int);
   end if;
 
-  -- Upsert baseline grants for each enrolled student.
+
   insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
   select
     e.course_id,
@@ -2417,12 +2340,8 @@ begin
   where e.course_id = _course_id
   on conflict (course_id, student_id, resource_type) do update
   set granted_amount = excluded.granted_amount;
-end;
-$$;
+end;$$;
 
--- ============================================================
--- RLS + grants for new tables
--- ============================================================
 
 alter table public.courses enable row level security;
 alter table public.resource_inventory enable row level security;
@@ -2475,7 +2394,7 @@ grant select on public.course_resource_allocations to authenticated;
 grant select on public.course_activities to authenticated;
 grant select on public.vps_email_validation_tokens to authenticated;
 
--- Needed for inserts into bigserial PK table `course_materials`
+
 grant usage, select on sequence public.course_materials_id_seq to authenticated;
 
 revoke all on function public.enroll_in_course(bigint) from public;
@@ -2550,7 +2469,7 @@ grant execute on function public.create_course_activity(bigint, text, text, inte
 revoke all on function public.consume_tokens_for_activity(bigint, bigint, text) from public;
 grant execute on function public.consume_tokens_for_activity(bigint, bigint, text) to authenticated;
 
--- courses: visible to students (open enrollments + enrolled), teacher own, admin all
+
 drop policy if exists "courses_select_teacher_or_admin" on public.courses;
 drop policy if exists "courses_select_visible_to_users" on public.courses;
 create policy "courses_select_visible_to_users"
@@ -2568,7 +2487,7 @@ using (
   )
 );
 
--- inventory: admin only
+
 drop policy if exists "resource_inventory_admin_only" on public.resource_inventory;
 create policy "resource_inventory_admin_only"
 on public.resource_inventory
@@ -2576,7 +2495,7 @@ for select
 to authenticated
 using (public.is_admin(auth.uid()));
 
--- admin activities: admin only (UI can show count)
+
 drop policy if exists "admin_activities_admin_only" on public.admin_activities;
 create policy "admin_activities_admin_only"
 on public.admin_activities
@@ -2585,7 +2504,7 @@ to authenticated
 using (public.is_admin(auth.uid()))
 with check (public.is_admin(auth.uid()));
 
--- vps credentials: admin sees all; student sees own; teacher sees for own courses
+
 drop policy if exists "vps_credentials_select_visible" on public.vps_credentials;
 create policy "vps_credentials_select_visible"
 on public.vps_credentials
@@ -2601,7 +2520,7 @@ using (
   )
 );
 
--- email outbox: admin only (simulated mail distribution)
+
 drop policy if exists "email_outbox_admin_only" on public.email_outbox;
 create policy "email_outbox_admin_only"
 on public.email_outbox
@@ -2610,7 +2529,7 @@ to authenticated
 using (public.is_admin(auth.uid()))
 with check (public.is_admin(auth.uid()));
 
--- vps email validation tokens: admin only (students trigger via email link -> server)
+
 drop policy if exists "vps_email_validation_tokens_admin_only" on public.vps_email_validation_tokens;
 create policy "vps_email_validation_tokens_admin_only"
 on public.vps_email_validation_tokens
@@ -2653,7 +2572,7 @@ using (
   or public.is_admin(auth.uid())
 );
 
--- requirements: teacher/admin access through owning course
+
 drop policy if exists "course_requirements_select_teacher_or_admin" on public.course_resource_requirements;
 create policy "course_requirements_select_teacher_or_admin"
 on public.course_resource_requirements
@@ -2713,7 +2632,7 @@ using (
   )
 );
 
--- allocations: select for course owner/admin; writes only via RPC (security definer)
+
 drop policy if exists "course_allocations_select_teacher_or_admin" on public.course_resource_allocations;
 create policy "course_allocations_select_teacher_or_admin"
 on public.course_resource_allocations
@@ -2727,7 +2646,7 @@ using (
   )
 );
 
--- enrollments: student sees own; teacher/admin sees enrollments for their courses
+
 drop policy if exists "course_enrollments_select_visible" on public.course_enrollments;
 create policy "course_enrollments_select_visible"
 on public.course_enrollments
@@ -2738,7 +2657,7 @@ using (
   or public.is_admin(auth.uid())
 );
 
--- materials: enrolled students + course teacher/admin can read; teacher/admin can manage
+
 drop policy if exists "course_materials_select_enrolled" on public.course_materials;
 create policy "course_materials_select_enrolled"
 on public.course_materials
@@ -2776,7 +2695,7 @@ with check (
   )
 );
 
--- student resources: student sees own; teacher/admin sees for their courses
+
 drop policy if exists "course_student_resources_select_visible" on public.course_student_resources;
 create policy "course_student_resources_select_visible"
 on public.course_student_resources
@@ -2792,7 +2711,7 @@ using (
   )
 );
 
--- resource requests: student manages own inserts/select; teacher/admin selects; teacher/admin can update (approve/reject via RPC)
+
 drop policy if exists "course_resource_requests_select_visible" on public.course_resource_requests;
 create policy "course_resource_requests_select_visible"
 on public.course_resource_requests
@@ -2840,7 +2759,7 @@ with check (
   )
 );
 
--- homework: student sees/creates own; teacher/admin sees for their courses
+
 drop policy if exists "course_homework_select_visible" on public.course_homework_submissions;
 create policy "course_homework_select_visible"
 on public.course_homework_submissions
@@ -2866,13 +2785,13 @@ with check (
   and public.is_enrolled_in_course(course_id, auth.uid())
 );
 
--- homework v2: assignments + submissions
+
 alter table public.course_homework_assignments enable row level security;
 alter table public.course_homework_assignment_files enable row level security;
 alter table public.course_homework_submissions_v2 enable row level security;
 alter table public.course_homework_submission_files enable row level security;
 
--- assignments: enrolled students can see; teacher/admin can see; only teacher/admin can insert/update/delete
+
 drop policy if exists "course_hw_assignments_select_visible" on public.course_homework_assignments;
 create policy "course_hw_assignments_select_visible"
 on public.course_homework_assignments
@@ -2918,7 +2837,7 @@ using (
   or exists (select 1 from public.courses c where c.id = course_id and c.teacher_id = auth.uid())
 );
 
--- assignment files: visible if assignment visible; only teacher/admin can manage
+
 drop policy if exists "course_hw_assignment_files_select_visible" on public.course_homework_assignment_files;
 create policy "course_hw_assignment_files_select_visible"
 on public.course_homework_assignment_files
@@ -2971,7 +2890,7 @@ using (
   )
 );
 
--- submissions v2: student sees own; teacher/admin sees for their course; students can insert for enrolled course
+
 drop policy if exists "course_hw_submissions_v2_select_visible" on public.course_homework_submissions_v2;
 create policy "course_hw_submissions_v2_select_visible"
 on public.course_homework_submissions_v2
@@ -3001,7 +2920,7 @@ to authenticated
 using (student_id = auth.uid())
 with check (student_id = auth.uid());
 
--- submission files: visible if submission visible; only owner student can insert/delete
+
 drop policy if exists "course_hw_submission_files_select_visible" on public.course_homework_submission_files;
 create policy "course_hw_submission_files_select_visible"
 on public.course_homework_submission_files
@@ -3046,7 +2965,7 @@ using (
   )
 );
 
--- token activities: student sees own; teacher/admin sees for their courses
+
 drop policy if exists "course_token_activities_select_visible" on public.course_token_activities;
 create policy "course_token_activities_select_visible"
 on public.course_token_activities
@@ -3062,7 +2981,7 @@ using (
   )
 );
 
--- vps validations: student sees own; teacher/admin sees for their courses
+
 drop policy if exists "course_vps_validations_select_visible" on public.course_vps_validations;
 create policy "course_vps_validations_select_visible"
 on public.course_vps_validations
@@ -3078,7 +2997,7 @@ using (
   )
 );
 
--- course activities: students enrolled + course teacher + admin can read; only admin can manage
+
 drop policy if exists "course_activities_select_visible" on public.course_activities;
 create policy "course_activities_select_visible"
 on public.course_activities

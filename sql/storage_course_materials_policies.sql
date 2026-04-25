@@ -1,20 +1,5 @@
--- Supabase Storage policies for bucket: course-materials
--- Path convention used by the app:
---   course-<course_id>/<anything>
---
--- NOTE:
--- In some Supabase projects, running these from SQL Editor can fail with:
---   ERROR: 42501: must be owner of table objects
--- If that happens, apply the exact USING/WITH CHECK expressions via:
---   Dashboard → Storage → Policies (table: storage.objects)
 
--- 1) Bucket (optional; you said you'll create it manually as public)
--- insert into storage.buckets (id, name, public)
--- values ('course-materials', 'course-materials', true)
--- on conflict (id) do update
--- set public = excluded.public;
 
--- 2) READ: allow anyone to read objects in this bucket
 drop policy if exists "course_materials_objects_read" on storage.objects;
 create policy "course_materials_objects_read"
 on storage.objects
@@ -24,13 +9,7 @@ using (
   bucket_id = 'course-materials'
 );
 
--- 3) INSERT:
--- - admin can upload anywhere in this bucket
--- - course teacher can upload under:
---     course-<id>/...
---     homework/course-<id>/...
--- - enrolled students can upload under:
---     homework/course-<id>/...
+
 drop policy if exists "course_materials_objects_insert" on storage.objects;
 create policy "course_materials_objects_insert"
 on storage.objects
@@ -58,7 +37,7 @@ with check (
   )
 );
 
--- 4) UPDATE: admin/teacher can update under course-<id>/ or homework/course-<id>/
+
 drop policy if exists "course_materials_objects_update" on storage.objects;
 create policy "course_materials_objects_update"
 on storage.objects
@@ -95,7 +74,7 @@ with check (
   )
 );
 
--- 5) DELETE: admin/teacher can delete under course-<id>/ or homework/course-<id>/
+
 drop policy if exists "course_materials_objects_delete" on storage.objects;
 create policy "course_materials_objects_delete"
 on storage.objects
@@ -116,4 +95,3 @@ using (
     )
   )
 );
-
