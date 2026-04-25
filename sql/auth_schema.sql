@@ -376,6 +376,176 @@ on conflict (title) do update
 set description = excluded.description,
     token_cost = excluded.token_cost;
 
+-- ============================================================
+-- Course-scoped activities (token consumption catalog per course)
+-- ============================================================
+create table if not exists public.course_activities (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  title text not null,
+  description text,
+  token_cost integer not null default 0 check (token_cost >= 0),
+  created_at timestamptz not null default now(),
+  unique (course_id, title)
+);
+
+create index if not exists course_activities_course_idx on public.course_activities(course_id);
+
+-- Seed defaults for every new course (idempotent per course)
+create or replace function public.seed_course_activities_defaults(_course_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate popula activitati.';
+  end if;
+
+  insert into public.course_activities (course_id, title, description, token_cost)
+  values
+    (_course_id, 'Rezumat text', 'Rezumat/explicare text cu AI', 10),
+    (_course_id, 'Generare imagine', 'Generare imagine cu AI', 50),
+    (_course_id, 'Asistenta dezvoltare software', 'Asistenta la dezvoltare aplicatii software', 5000),
+    (_course_id, 'Traducere text', 'Traducere text (RO/EN/FR etc.)', 25),
+    (_course_id, 'Corectare gramatica', 'Corectare gramatica si stil', 15),
+    (_course_id, 'Analiza cod', 'Analiza si explicare cod', 200),
+    (_course_id, 'Generare teste', 'Generare suite de teste unitare', 800),
+    (_course_id, 'Debugging ghidat', 'Diagnosticare si pasi de rezolvare', 600),
+    (_course_id, 'Generare documentatie', 'Documentatie pentru proiect/feature', 300),
+    (_course_id, 'Plan de invatare', 'Plan personalizat de invatare', 120)
+  on conflict (course_id, title) do update
+  set description = excluded.description,
+      token_cost = excluded.token_cost;
+end;
+$$;
+
+-- Optional helper: called after course creation to seed defaults automatically.
+create or replace function public.handle_new_course_seed_activities()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- We cannot rely on auth.uid() inside trigger the same way; allow seeding without admin check here.
+  insert into public.course_activities (course_id, title, description, token_cost)
+  values
+    (new.id, 'Rezumat text', 'Rezumat/explicare text cu AI', 10),
+    (new.id, 'Generare imagine', 'Generare imagine cu AI', 50),
+    (new.id, 'Asistenta dezvoltare software', 'Asistenta la dezvoltare aplicatii software', 5000),
+    (new.id, 'Traducere text', 'Traducere text (RO/EN/FR etc.)', 25),
+    (new.id, 'Corectare gramatica', 'Corectare gramatica si stil', 15),
+    (new.id, 'Analiza cod', 'Analiza si explicare cod', 200),
+    (new.id, 'Generare teste', 'Generare suite de teste unitare', 800),
+    (new.id, 'Debugging ghidat', 'Diagnosticare si pasi de rezolvare', 600),
+    (new.id, 'Generare documentatie', 'Documentatie pentru proiect/feature', 300),
+    (new.id, 'Plan de invatare', 'Plan personalizat de invatare', 120)
+  on conflict (course_id, title) do update
+  set description = excluded.description,
+      token_cost = excluded.token_cost;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_course_created_seed_activities on public.courses;
+create trigger on_course_created_seed_activities
+after insert on public.courses
+for each row execute function public.handle_new_course_seed_activities();
+
+create or replace function public.create_course_activity(
+  _course_id bigint,
+  _title text,
+  _description text,
+  _token_cost integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate crea activitati.';
+  end if;
+
+  if coalesce(trim(_title), '') = '' then
+    raise exception 'Titlu invalid.';
+  end if;
+
+  if _token_cost is null or _token_cost < 0 then
+    raise exception 'Token cost invalid.';
+  end if;
+
+  insert into public.course_activities (course_id, title, description, token_cost)
+  values (_course_id, trim(_title), nullif(trim(_description), ''), _token_cost)
+  on conflict (course_id, title) do update
+  set description = excluded.description,
+      token_cost = excluded.token_cost;
+end;
+$$;
+
+-- Student RPC: consume tokens based on a course activity definition
+create or replace function public.consume_tokens_for_activity(
+  _course_id bigint,
+  _activity_id bigint,
+  _note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_cost integer;
+  v_granted integer;
+  v_consumed integer;
+  v_remaining integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  if not public.is_enrolled_in_course(_course_id, auth.uid()) then
+    raise exception 'Nu esti inrolat la acest curs.';
+  end if;
+
+  select token_cost into v_cost
+  from public.course_activities
+  where id = _activity_id
+    and course_id = _course_id;
+
+  if v_cost is null then
+    raise exception 'Activitate inexistenta.';
+  end if;
+
+  select granted_amount, consumed_amount into v_granted, v_consumed
+  from public.course_student_resources
+  where course_id = _course_id
+    and student_id = auth.uid()
+    and resource_type = 'tokens';
+
+  v_granted := coalesce(v_granted, 0);
+  v_consumed := coalesce(v_consumed, 0);
+  v_remaining := greatest(v_granted - v_consumed, 0);
+
+  if v_remaining < v_cost then
+    raise exception 'Token-uri insuficiente.';
+  end if;
+
+  insert into public.course_token_activities (course_id, student_id, tokens_used, note)
+  values (_course_id, auth.uid(), v_cost, coalesce(_note, 'activity_id=' || _activity_id));
+
+  update public.course_student_resources
+  set consumed_amount = consumed_amount + v_cost
+  where course_id = _course_id
+    and student_id = auth.uid()
+    and resource_type = 'tokens';
+end;
+$$;
+
 -- Migration helper (idempotent)
 alter table public.admin_activities
   add column if not exists token_cost integer not null default 0;
@@ -459,8 +629,13 @@ set search_path = public
 as $$
   select
     r.resource_type,
-    coalesce(sum(r.required_per_student * c.max_students), 0)::int as required_total,
-    ((coalesce(sum(r.required_per_student * c.max_students), 0) * 110) + 99) / 100 as suggested_total
+    coalesce(sum((r.required_per_student::bigint) * (c.max_students::bigint)), 0)::int as required_total,
+    (
+      (
+        coalesce(sum((r.required_per_student::bigint) * (c.max_students::bigint)), 0)::numeric * 110
+      ) + 99
+    ) / 100
+    ::int as suggested_total
   from public.course_resource_requirements r
   join public.courses c on c.id = r.course_id
   group by r.resource_type
@@ -598,7 +773,17 @@ begin
       'User: ' || v_username || E'\n' ||
       'Parola: ' || v_password || E'\n' ||
       E'\n' ||
-      'Mesaj generat automat (simulat outbox).'
+      'Validare utilizare (simulata):' || E'\n' ||
+      'Deschide direct cu parametri:' || E'\n' ||
+      'https://httpbin.org/get?course_id=' || _course_id ||
+        '&host=' || _default_host ||
+        '&port=' || _default_port ||
+        '&username=' || v_username ||
+        '&password=' || v_password || E'\n' ||
+      E'\n' ||
+      'Sau POST (echo json): https://httpbin.org/post' || E'\n' ||
+      E'\n' ||
+      'Nota: In platforma, sectiunea VPS poate rula validarea automat si consuma 1 abonament.'
     );
   end loop;
 end;
@@ -1155,7 +1340,7 @@ begin
   -- Bonus profesor: mereu 10% din necesarul cursului (rotunjit in sus).
   -- Important: la re-alocare nu resetam bonusul ramas; il ajustam doar cu diferenta
   -- daca se modifica necesarul (si implicit bonusul).
-  bonus := ((req * 10) + 99) / 100;
+  bonus := (((req::numeric) * 10) + 99) / 100 ::int;
 
   insert into public.course_resource_allocations (
     course_id,
@@ -1200,21 +1385,45 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  per_student integer;
+  enrolled_count integer;
+  allocated integer;
+  grant_per_student integer;
 begin
-  insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
-  select
-    r.course_id,
-    _student_id,
-    r.resource_type,
-    greatest(r.required_per_student, 0),
-    0
-  from public.course_resource_requirements r
-  join public.course_resource_allocations a
-    on a.course_id = r.course_id
-   and a.resource_type = r.resource_type
-  where r.course_id = _course_id
-  on conflict (course_id, student_id, resource_type) do update
-  set granted_amount = excluded.granted_amount;
+  for per_student, allocated in
+    select r.required_per_student, a.allocated_amount
+    from public.course_resource_requirements r
+    join public.course_resource_allocations a
+      on a.course_id = r.course_id
+     and a.resource_type = r.resource_type
+    where r.course_id = _course_id
+  loop
+    -- enrolled count is per course; used to compute uniform per-student grant under partial allocation
+    select count(*) into enrolled_count
+    from public.course_enrollments
+    where course_id = _course_id;
+
+    if coalesce(enrolled_count, 0) <= 0 then
+      grant_per_student := 0;
+    else
+      grant_per_student := least(greatest(per_student, 0), floor((greatest(allocated, 0)::numeric) / enrolled_count)::int);
+    end if;
+
+    insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
+    select
+      _course_id,
+      _student_id,
+      r.resource_type,
+      grant_per_student,
+      0
+    from public.course_resource_requirements r
+    where r.course_id = _course_id
+      and r.required_per_student = per_student
+    limit 1
+    on conflict (course_id, student_id, resource_type) do update
+    set granted_amount = excluded.granted_amount;
+  end loop;
 end;
 $$;
 
@@ -1224,7 +1433,13 @@ select
   e.course_id,
   e.student_id,
   r.resource_type,
-  greatest(r.required_per_student, 0),
+  least(
+    greatest(r.required_per_student, 0),
+    case
+      when (select count(*) from public.course_enrollments e2 where e2.course_id = e.course_id) <= 0 then 0
+      else floor((greatest(a.allocated_amount, 0)::numeric) / (select count(*) from public.course_enrollments e2 where e2.course_id = e.course_id))::int
+    end
+  ),
   0
 from public.course_enrollments e
 join public.course_resource_requirements r on r.course_id = e.course_id
@@ -1248,8 +1463,8 @@ as $$
 declare
   per_student integer;
   enrolled_count integer;
-  total_needed integer;
   allocated integer;
+  grant_per_student integer;
 begin
   if not public.is_admin(auth.uid()) then
     raise exception 'Doar admin poate distribui resurse.';
@@ -1268,8 +1483,6 @@ begin
   from public.course_enrollments
   where course_id = _course_id;
 
-  total_needed := greatest(per_student, 0) * greatest(enrolled_count, 0);
-
   select allocated_amount into allocated
   from public.course_resource_allocations
   where course_id = _course_id
@@ -1279,8 +1492,11 @@ begin
     raise exception 'Nu exista alocare admin pentru acest tip de resursa.';
   end if;
 
-  if allocated < total_needed then
-    raise exception 'Alocare insuficienta: necesar %, alocat %.', total_needed, allocated;
+  if coalesce(enrolled_count, 0) <= 0 then
+    grant_per_student := 0;
+  else
+    -- Best effort: distribute uniformly up to professor requirement.
+    grant_per_student := least(greatest(per_student, 0), floor((greatest(allocated, 0)::numeric) / enrolled_count)::int);
   end if;
 
   -- Upsert baseline grants for each enrolled student.
@@ -1289,7 +1505,7 @@ begin
     e.course_id,
     e.student_id,
     _resource_type,
-    per_student,
+    grant_per_student,
     0
   from public.course_enrollments e
   where e.course_id = _course_id
@@ -1316,6 +1532,7 @@ alter table public.course_homework_submissions enable row level security;
 alter table public.course_token_activities enable row level security;
 alter table public.course_vps_validations enable row level security;
 alter table public.course_resource_allocations enable row level security;
+alter table public.course_activities enable row level security;
 
 revoke all on public.courses from anon, authenticated;
 revoke all on public.resource_inventory from anon, authenticated;
@@ -1331,12 +1548,13 @@ revoke all on public.course_homework_submissions from anon, authenticated;
 revoke all on public.course_token_activities from anon, authenticated;
 revoke all on public.course_vps_validations from anon, authenticated;
 revoke all on public.course_resource_allocations from anon, authenticated;
+revoke all on public.course_activities from anon, authenticated;
 
 grant select, insert, update, delete on public.courses to authenticated;
 grant select on public.resource_inventory to authenticated;
 grant select on public.admin_activities to authenticated;
 grant select on public.vps_credentials to authenticated;
-grant select on public.email_outbox to authenticated;
+grant select, update on public.email_outbox to authenticated;
 grant select, insert, update, delete on public.course_resource_requirements to authenticated;
 grant select on public.course_enrollments to authenticated;
 grant select on public.course_materials to authenticated;
@@ -1346,6 +1564,7 @@ grant select, insert on public.course_homework_submissions to authenticated;
 grant select on public.course_token_activities to authenticated;
 grant select on public.course_vps_validations to authenticated;
 grant select on public.course_resource_allocations to authenticated;
+grant select on public.course_activities to authenticated;
 
 revoke all on function public.enroll_in_course(bigint) from public;
 grant execute on function public.enroll_in_course(bigint) to authenticated;
@@ -1394,6 +1613,15 @@ grant execute on function public.simulate_token_usage(bigint, integer, text) to 
 
 revoke all on function public.simulate_vps_validation(bigint, boolean, text) from public;
 grant execute on function public.simulate_vps_validation(bigint, boolean, text) to authenticated;
+
+revoke all on function public.seed_course_activities_defaults(bigint) from public;
+grant execute on function public.seed_course_activities_defaults(bigint) to authenticated;
+
+revoke all on function public.create_course_activity(bigint, text, text, integer) from public;
+grant execute on function public.create_course_activity(bigint, text, text, integer) to authenticated;
+
+revoke all on function public.consume_tokens_for_activity(bigint, bigint, text) from public;
+grant execute on function public.consume_tokens_for_activity(bigint, bigint, text) to authenticated;
 
 -- courses: visible to students (open enrollments + enrolled), teacher own, admin all
 drop policy if exists "courses_select_teacher_or_admin" on public.courses;
@@ -1733,3 +1961,27 @@ using (
       and c.teacher_id = auth.uid()
   )
 );
+
+-- course activities: students enrolled + course teacher + admin can read; only admin can manage
+drop policy if exists "course_activities_select_visible" on public.course_activities;
+create policy "course_activities_select_visible"
+on public.course_activities
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+  or public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+drop policy if exists "course_activities_admin_manage" on public.course_activities;
+create policy "course_activities_admin_manage"
+on public.course_activities
+for all
+to authenticated
+using (public.is_admin(auth.uid()))
+with check (public.is_admin(auth.uid()));

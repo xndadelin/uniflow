@@ -2,8 +2,7 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
 
 type CourseRow = {
@@ -120,69 +119,6 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
     },
   });
 
-  const validateVpsMutation = useMutation({
-    mutationFn: async () => {
-      const cred = vpsCredentialsQuery.data;
-      const byType = new Map((resourcesQuery.data ?? []).map((r) => [r.resource_type, r]));
-      const vps = byType.get("vps_subscription");
-      const remainingVps = Math.max(0, (vps?.granted_amount ?? 0) - (vps?.consumed_amount ?? 0));
-
-      if (remainingVps < 1) throw new Error("Abonamente VPS insuficiente.");
-      if (!cred) throw new Error("Nu exista credențiale VPS alocate (inca).");
-      if (!cred.host) throw new Error("Host/IP lipsa pentru VPS.");
-
-      const payload = {
-        course_id: courseId,
-        host: cred.host,
-        port: cred.port ?? 22,
-        username: cred.username,
-        password: cred.password,
-      };
-
-      const res = await fetch("https://httpbin.org/post", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      let echoed: unknown = null;
-      try {
-        echoed = (await res.json()) as unknown;
-      } catch {
-        // ignore parse errors
-      }
-
-      const echoedJson =
-        echoed && typeof echoed === "object" && "json" in echoed ? (echoed as { json?: unknown }).json : null;
-
-      const isValid =
-        res.ok &&
-        Boolean(echoedJson) &&
-        typeof echoedJson === "object" &&
-        (echoedJson as { username?: unknown }).username === payload.username &&
-        (echoedJson as { password?: unknown }).password === payload.password &&
-        (echoedJson as { host?: unknown }).host === payload.host;
-
-      const note = isValid
-        ? "Validare VPS reusita via httpbin (echo match)."
-        : `Validare VPS esuata via httpbin (status=${res.status}).`;
-
-      const { error } = await supabase.rpc("simulate_vps_validation", {
-        _course_id: courseId,
-        _is_valid: isValid,
-        _note: note,
-      });
-      if (error) throw error;
-
-      return { isValid };
-    },
-    onSuccess: async ({ isValid }) => {
-      toast.success(isValid ? "Validare VPS: OK" : "Validare VPS: invalid");
-      await resourcesQuery.refetch();
-    },
-    onError: (e: unknown) => toast.error(getErrorMessage(e)),
-  });
-
   if (enrollmentQuery.isLoading) {
     return (
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
@@ -262,7 +198,7 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
       </section>
 
       <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">VPS (credențiale + validare simulata)</h2>
+        <h2 className="font-mono text-sm font-semibold text-foreground">VPS (credențiale)</h2>
         {vpsCredentialsQuery.isLoading ? (
           <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
         ) : vpsCredentialsQuery.isError ? (
@@ -289,19 +225,9 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
                 </div>
               </div>
               <div className="mt-2 text-[11px] text-muted-foreground">
-                Validarea simuleaza utilizarea trimitand credențialele catre <span className="font-mono">httpbin.org</span>.
+                Validarea utilizarii abonamentelor se face doar din link-ul primit pe email.
               </div>
             </div>
-
-            <button
-              type="button"
-              disabled={validateVpsMutation.isPending || remainingVps < 1}
-              onClick={() => validateVpsMutation.mutate()}
-              className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-              title={remainingVps < 1 ? "Nu ai abonamente VPS ramase." : "Valideaza utilizare VPS (simulat) via httpbin"}
-            >
-              Valideaza via httpbin (consuma 1)
-            </button>
           </div>
         )}
       </section>
