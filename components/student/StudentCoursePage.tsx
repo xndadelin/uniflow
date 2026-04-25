@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 
 type CourseRow = {
@@ -34,6 +35,14 @@ type VpsCredentialRow = {
   port: number | null;
 };
 
+type ResourceRequestRow = {
+  id: number;
+  resource_type: "tokens" | "vps_subscription";
+  requested_amount: number;
+  status: "pending" | "approved" | "rejected" | "escalated";
+  created_at: string;
+};
+
 function getErrorMessage(err: unknown) {
   if (!err) return "Eroare necunoscuta.";
   if (err instanceof Error) return err.message;
@@ -49,6 +58,8 @@ function formatResourceLabel(t: StudentResourceRow["resource_type"]) {
 
 export function StudentCoursePage({ courseId }: { courseId: number }) {
   const supabase = useMemo(() => createClient(), []);
+  const [requestType, setRequestType] = useState<StudentResourceRow["resource_type"]>("tokens");
+  const [requestAmount, setRequestAmount] = useState<string>("1");
 
   const enrollmentQuery = useQuery({
     queryKey: ["course-enrollment", courseId],
@@ -103,6 +114,39 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
       if (error) throw error;
       return (data ?? []) as StudentResourceRow[];
     },
+  });
+
+  const requestsQuery = useQuery({
+    queryKey: ["course-resource-requests", courseId],
+    enabled: enrollmentQuery.data?.isEnrolled === true,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("course_resource_requests")
+        .select("id,resource_type,requested_amount,status,created_at")
+        .eq("course_id", courseId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as ResourceRequestRow[];
+    },
+  });
+
+  const createRequestMutation = useMutation({
+    mutationFn: async () => {
+      const amt = Number(requestAmount);
+      if (!Number.isFinite(amt) || amt <= 0) throw new Error("Cantitate invalida.");
+      const { error } = await supabase.rpc("request_course_resources", {
+        _course_id: courseId,
+        _resource_type: requestType,
+        _requested_amount: amt,
+      });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Cerere trimisa.");
+      setRequestAmount("1");
+      await requestsQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
   });
 
   const vpsCredentialsQuery = useQuery({
@@ -228,6 +272,69 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
                 Validarea utilizarii abonamentelor se face doar din link-ul primit pe email.
               </div>
             </div>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
+        <h2 className="font-mono text-sm font-semibold text-foreground">Cereri resurse suplimentare</h2>
+        <div className="mt-3 grid gap-2 sm:grid-cols-[220px_160px_auto] sm:items-end">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Tip resursa</label>
+            <select
+              value={requestType}
+              onChange={(e) => setRequestType(e.target.value as StudentResourceRow["resource_type"])}
+              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+            >
+              <option value="tokens">tokens</option>
+              <option value="vps_subscription">vps_subscription</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Cantitate</label>
+            <input
+              value={requestAmount}
+              onChange={(e) => setRequestAmount(e.target.value)}
+              type="number"
+              min={1}
+              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+            />
+          </div>
+          <button
+            type="button"
+            disabled={createRequestMutation.isPending}
+            onClick={() => createRequestMutation.mutate()}
+            className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+          >
+            Cere resurse
+          </button>
+        </div>
+
+        {requestsQuery.isLoading ? (
+          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
+        ) : requestsQuery.isError ? (
+          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+            Eroare: <span className="font-mono text-xs">{getErrorMessage(requestsQuery.error)}</span>
+          </div>
+        ) : (requestsQuery.data ?? []).length === 0 ? (
+          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+            Nu ai cereri inca.
+          </div>
+        ) : (
+          <div className="mt-4 space-y-2 text-sm">
+            {(requestsQuery.data ?? []).map((r) => (
+              <div key={r.id} className="rounded-md border border-border/70 bg-muted/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-mono text-xs text-muted-foreground">#{r.id}</div>
+                  <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">{r.resource_type}</span>
+                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">cantitate: {r.requested_amount}</span>
+                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">status: {r.status}</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>

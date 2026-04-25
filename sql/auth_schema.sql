@@ -665,6 +665,19 @@ create table if not exists public.email_outbox (
   sent_at timestamptz
 );
 
+-- Token table for "consume VPS subscription via email link"
+create table if not exists public.vps_email_validation_tokens (
+  token uuid primary key default gen_random_uuid(),
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  used_at timestamptz
+);
+
+create index if not exists vps_email_validation_tokens_course_idx on public.vps_email_validation_tokens(course_id);
+create index if not exists vps_email_validation_tokens_student_idx on public.vps_email_validation_tokens(student_id);
+
 -- Admin RPC: set inventory totals (remaining is reset to total)
 create or replace function public.set_resource_inventory(
   _resource_type public.digital_resource_type,
@@ -731,7 +744,8 @@ $$;
 create or replace function public.assign_vps_credentials_and_queue_emails(
   _course_id bigint,
   _default_host text,
-  _default_port integer default 22
+  _default_port integer default 22,
+  _app_base_url text default ''
 )
 returns void
 language plpgsql
@@ -742,10 +756,16 @@ declare
   r record;
   v_username text;
   v_password text;
+  v_token uuid;
+  v_course_title text;
 begin
   if not public.is_admin(auth.uid()) then
     raise exception 'Doar admin poate distribui credentiale.';
   end if;
+
+  select title into v_course_title
+  from public.courses
+  where id = _course_id;
 
   for r in
     select e.student_id, u.email
@@ -763,29 +783,96 @@ begin
     set host = excluded.host,
         port = excluded.port;
 
+    insert into public.vps_email_validation_tokens (course_id, student_id)
+    values (_course_id, r.student_id)
+    returning token into v_token;
+
     insert into public.email_outbox (to_email, subject, body)
     values (
       r.email,
       'Credențiale VPS - UniFlow',
-      'Curs #' || _course_id || E'\n' ||
+      'Curs #' || _course_id || ': ' || coalesce(v_course_title, '-') || E'\n' ||
       'Host/IP: ' || _default_host || E'\n' ||
       'Port: ' || _default_port || E'\n' ||
       'User: ' || v_username || E'\n' ||
       'Parola: ' || v_password || E'\n' ||
       E'\n' ||
       'Validare utilizare (simulata):' || E'\n' ||
-      'Deschide direct cu parametri:' || E'\n' ||
-      'https://httpbin.org/get?course_id=' || _course_id ||
-        '&host=' || _default_host ||
-        '&port=' || _default_port ||
-        '&username=' || v_username ||
-        '&password=' || v_password || E'\n' ||
-      E'\n' ||
-      'Sau POST (echo json): https://httpbin.org/post' || E'\n' ||
+      'Click aici pentru validare (consuma 1 abonament):' || E'\n' ||
+      rtrim(coalesce(nullif(trim(_app_base_url), ''), ''), '/') || '/api/vps/validate?token=' || v_token || E'\n' ||
       E'\n' ||
       'Nota: In platforma, sectiunea VPS poate rula validarea automat si consuma 1 abonament.'
     );
   end loop;
+end;
+$$;
+
+create or replace function public.consume_vps_validation_from_token(
+  _token uuid,
+  _is_valid boolean,
+  _note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_id bigint;
+  v_student_id uuid;
+  v_used timestamptz;
+  v_expires timestamptz;
+  v_granted integer;
+  v_consumed integer;
+  v_remaining integer;
+begin
+  select course_id, student_id, used_at, expires_at
+  into v_course_id, v_student_id, v_used, v_expires
+  from public.vps_email_validation_tokens
+  where token = _token;
+
+  if v_course_id is null then
+    raise exception 'Token invalid.';
+  end if;
+
+  if v_used is not null then
+    raise exception 'Token deja folosit.';
+  end if;
+
+  if v_expires is not null and v_expires < now() then
+    raise exception 'Token expirat.';
+  end if;
+
+  if not public.is_enrolled_in_course(v_course_id, v_student_id) then
+    raise exception 'Studentul nu este inrolat.';
+  end if;
+
+  select granted_amount, consumed_amount into v_granted, v_consumed
+  from public.course_student_resources
+  where course_id = v_course_id
+    and student_id = v_student_id
+    and resource_type = 'vps_subscription';
+
+  v_granted := coalesce(v_granted, 0);
+  v_consumed := coalesce(v_consumed, 0);
+  v_remaining := greatest(v_granted - v_consumed, 0);
+
+  if v_remaining < 1 then
+    raise exception 'Abonamente VPS insuficiente.';
+  end if;
+
+  insert into public.course_vps_validations (course_id, student_id, is_valid, note)
+  values (v_course_id, v_student_id, coalesce(_is_valid, false), _note);
+
+  update public.course_student_resources
+  set consumed_amount = consumed_amount + 1
+  where course_id = v_course_id
+    and student_id = v_student_id
+    and resource_type = 'vps_subscription';
+
+  update public.vps_email_validation_tokens
+  set used_at = now()
+  where token = _token;
 end;
 $$;
 
@@ -899,6 +986,14 @@ do $$
 begin
   if not exists (select 1 from pg_type where typname = 'course_resource_request_status') then
     create type public.course_resource_request_status as enum ('pending', 'approved', 'rejected');
+  else
+    -- Add escalation state if schema already exists
+    begin
+      alter type public.course_resource_request_status add value if not exists 'escalated';
+    exception when others then
+      -- ignore if not supported on older versions
+      null;
+    end;
   end if;
 end $$;
 
@@ -911,8 +1006,15 @@ create table if not exists public.course_resource_requests (
   status public.course_resource_request_status not null default 'pending',
   decided_by uuid references public.app_users(id) on delete set null,
   decided_at timestamptz,
+  escalated_by uuid references public.app_users(id) on delete set null,
+  escalated_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+alter table public.course_resource_requests
+  add column if not exists escalated_by uuid references public.app_users(id) on delete set null;
+alter table public.course_resource_requests
+  add column if not exists escalated_at timestamptz;
 
 create index if not exists course_resource_requests_course_idx on public.course_resource_requests(course_id);
 create index if not exists course_resource_requests_student_idx on public.course_resource_requests(student_id);
@@ -1048,13 +1150,110 @@ begin
   end if;
 
   if v_bonus_remaining < v_amount then
-    raise exception 'Bonus insuficient pentru aprobare.';
+    raise exception 'Bonus insuficient pentru aprobare. Trimite cererea la admin.';
   end if;
 
   update public.course_resource_allocations
   set professor_bonus_remaining = professor_bonus_remaining - v_amount
   where course_id = v_course_id
     and resource_type = v_type;
+
+  insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
+  values (v_course_id, v_student_id, v_type, v_amount, 0)
+  on conflict (course_id, student_id, resource_type) do update
+  set granted_amount = public.course_student_resources.granted_amount + excluded.granted_amount;
+
+  update public.course_resource_requests
+  set status = 'approved',
+      decided_by = auth.uid(),
+      decided_at = now()
+  where id = _request_id;
+end;
+$$;
+
+-- Teacher RPC: escalate request to admin (when professor bonus is insufficient)
+create or replace function public.escalate_course_resource_request(_request_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_id bigint;
+  v_teacher_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  select r.course_id into v_course_id
+  from public.course_resource_requests r
+  where r.id = _request_id
+    and r.status = 'pending';
+
+  if v_course_id is null then
+    raise exception 'Cerere inexistenta sau deja procesata.';
+  end if;
+
+  select c.teacher_id into v_teacher_id
+  from public.courses c
+  where c.id = v_course_id;
+
+  if v_teacher_id <> auth.uid() and not public.is_admin(auth.uid()) then
+    raise exception 'Doar profesorul cursului sau admin poate escalada.';
+  end if;
+
+  update public.course_resource_requests
+  set status = 'escalated',
+      escalated_by = auth.uid(),
+      escalated_at = now()
+  where id = _request_id;
+end;
+$$;
+
+-- Admin RPC: approve an escalated request by granting from global inventory (resource_inventory)
+create or replace function public.admin_approve_escalated_course_resource_request(_request_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_id bigint;
+  v_student_id uuid;
+  v_type public.digital_resource_type;
+  v_amount integer;
+  inv_remaining integer;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate aproba escalari.';
+  end if;
+
+  select r.course_id, r.student_id, r.resource_type, r.requested_amount
+  into v_course_id, v_student_id, v_type, v_amount
+  from public.course_resource_requests r
+  where r.id = _request_id
+    and r.status = 'escalated';
+
+  if v_course_id is null then
+    raise exception 'Cerere inexistenta sau nu este escaladata.';
+  end if;
+
+  select remaining_amount into inv_remaining
+  from public.resource_inventory
+  where resource_type = v_type;
+
+  if inv_remaining is null then
+    raise exception 'Inventar inexistent pentru acest tip.';
+  end if;
+
+  if inv_remaining < greatest(v_amount, 0) then
+    raise exception 'Inventar insuficient: ramas %, cerut %.', inv_remaining, greatest(v_amount, 0);
+  end if;
+
+  update public.resource_inventory
+  set remaining_amount = remaining_amount - greatest(v_amount, 0)
+  where resource_type = v_type;
 
   insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
   values (v_course_id, v_student_id, v_type, v_amount, 0)
@@ -1533,6 +1732,7 @@ alter table public.course_token_activities enable row level security;
 alter table public.course_vps_validations enable row level security;
 alter table public.course_resource_allocations enable row level security;
 alter table public.course_activities enable row level security;
+alter table public.vps_email_validation_tokens enable row level security;
 
 revoke all on public.courses from anon, authenticated;
 revoke all on public.resource_inventory from anon, authenticated;
@@ -1549,6 +1749,7 @@ revoke all on public.course_token_activities from anon, authenticated;
 revoke all on public.course_vps_validations from anon, authenticated;
 revoke all on public.course_resource_allocations from anon, authenticated;
 revoke all on public.course_activities from anon, authenticated;
+revoke all on public.vps_email_validation_tokens from anon, authenticated;
 
 grant select, insert, update, delete on public.courses to authenticated;
 grant select on public.resource_inventory to authenticated;
@@ -1565,6 +1766,7 @@ grant select on public.course_token_activities to authenticated;
 grant select on public.course_vps_validations to authenticated;
 grant select on public.course_resource_allocations to authenticated;
 grant select on public.course_activities to authenticated;
+grant select on public.vps_email_validation_tokens to authenticated;
 
 revoke all on function public.enroll_in_course(bigint) from public;
 grant execute on function public.enroll_in_course(bigint) to authenticated;
@@ -1584,8 +1786,11 @@ grant execute on function public.set_resource_inventory(public.digital_resource_
 revoke all on function public.allocate_course_resources_from_inventory(bigint, public.digital_resource_type, integer) from public;
 grant execute on function public.allocate_course_resources_from_inventory(bigint, public.digital_resource_type, integer) to authenticated;
 
-revoke all on function public.assign_vps_credentials_and_queue_emails(bigint, text, integer) from public;
-grant execute on function public.assign_vps_credentials_and_queue_emails(bigint, text, integer) to authenticated;
+revoke all on function public.assign_vps_credentials_and_queue_emails(bigint, text, integer, text) from public;
+grant execute on function public.assign_vps_credentials_and_queue_emails(bigint, text, integer, text) to authenticated;
+
+revoke all on function public.consume_vps_validation_from_token(uuid, boolean, text) from public;
+grant execute on function public.consume_vps_validation_from_token(uuid, boolean, text) to authenticated;
 
 revoke all on function public.apply_baseline_grants_for_student(bigint, uuid) from public;
 grant execute on function public.apply_baseline_grants_for_student(bigint, uuid) to authenticated;
@@ -1604,6 +1809,12 @@ grant execute on function public.approve_course_resource_request(bigint) to auth
 
 revoke all on function public.reject_course_resource_request(bigint) from public;
 grant execute on function public.reject_course_resource_request(bigint) to authenticated;
+
+revoke all on function public.escalate_course_resource_request(bigint) from public;
+grant execute on function public.escalate_course_resource_request(bigint) to authenticated;
+
+revoke all on function public.admin_approve_escalated_course_resource_request(bigint) from public;
+grant execute on function public.admin_approve_escalated_course_resource_request(bigint) to authenticated;
 
 revoke all on function public.submit_homework(bigint, text, text) from public;
 grant execute on function public.submit_homework(bigint, text, text) to authenticated;
@@ -1678,6 +1889,15 @@ using (
 drop policy if exists "email_outbox_admin_only" on public.email_outbox;
 create policy "email_outbox_admin_only"
 on public.email_outbox
+for all
+to authenticated
+using (public.is_admin(auth.uid()))
+with check (public.is_admin(auth.uid()));
+
+-- vps email validation tokens: admin only (students trigger via email link -> server)
+drop policy if exists "vps_email_validation_tokens_admin_only" on public.vps_email_validation_tokens;
+create policy "vps_email_validation_tokens_admin_only"
+on public.vps_email_validation_tokens
 for all
 to authenticated
 using (public.is_admin(auth.uid()))

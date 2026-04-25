@@ -221,6 +221,7 @@ function AdminResurseInner() {
           _course_id: cid,
           _default_host: vpsHost.trim(),
           _default_port: 22,
+          _app_base_url: window.location.origin,
         });
         if (vpsErr) throw vpsErr;
 
@@ -284,6 +285,7 @@ function AdminResurseInner() {
           _course_id: cid,
           _default_host: vpsHost.trim(),
           _default_port: 22,
+          _app_base_url: window.location.origin,
         });
         if (vpsErr) throw vpsErr;
 
@@ -310,6 +312,7 @@ function AdminResurseInner() {
         _course_id: cid,
         _default_host: vpsHost.trim(),
         _default_port: 22,
+        _app_base_url: window.location.origin,
       });
       if (error) throw error;
 

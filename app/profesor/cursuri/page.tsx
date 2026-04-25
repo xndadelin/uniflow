@@ -29,6 +29,25 @@ type RequirementDraft = {
   required_per_student: string;
 };
 
+type CourseMaterialRow = {
+  id: number;
+  course_id: number;
+  title: string;
+  description: string | null;
+  url: string;
+  created_at: string;
+};
+
+type ResourceRequestRow = {
+  id: number;
+  course_id: number;
+  student_id: string;
+  resource_type: "tokens" | "vps_subscription";
+  requested_amount: number;
+  status: "pending" | "approved" | "rejected" | "escalated";
+  created_at: string;
+};
+
 function formatResourceLabel(t: RequirementDraft["resource_type"]) {
   return t === "tokens" ? "Token-uri AI" : "Abonamente VPS";
 }
@@ -96,8 +115,124 @@ export default function ProfesorCursuriPage() {
         return acc;
       }, {});
 
-      return { courses: (courses ?? []) as Course[], requirementsByCourse: byCourse };
+      const { data: materials, error: matErr } = courseIds.length
+        ? await supabase
+            .from("course_materials")
+            .select("id,course_id,title,description,url,created_at")
+            .in("course_id", courseIds)
+            .order("created_at", { ascending: false })
+        : { data: [] as CourseMaterialRow[], error: null };
+      if (matErr) throw matErr;
+
+      const { data: requests, error: reqErr2 } = courseIds.length
+        ? await supabase
+            .from("course_resource_requests")
+            .select("id,course_id,student_id,resource_type,requested_amount,status,created_at")
+            .in("course_id", courseIds)
+            .order("created_at", { ascending: false })
+        : { data: [] as ResourceRequestRow[], error: null };
+      if (reqErr2) throw reqErr2;
+
+      const materialsByCourse = (materials ?? []).reduce<Record<number, CourseMaterialRow[]>>((acc, m) => {
+        acc[m.course_id] = [...(acc[m.course_id] ?? []), m];
+        return acc;
+      }, {});
+
+      const requestsByCourse = (requests ?? []).reduce<Record<number, ResourceRequestRow[]>>((acc, r) => {
+        acc[r.course_id] = [...(acc[r.course_id] ?? []), r];
+        return acc;
+      }, {});
+
+      return { courses: (courses ?? []) as Course[], requirementsByCourse: byCourse, materialsByCourse, requestsByCourse };
     },
+  });
+
+  const [materialDraftByCourse, setMaterialDraftByCourse] = useState<Record<number, { title: string; url: string; description: string }>>({});
+  const [materialFileByCourse, setMaterialFileByCourse] = useState<Record<number, File | null>>({});
+
+  const addMaterialMutation = useMutation({
+    mutationFn: async ({
+      courseId,
+      title,
+      url,
+      description,
+      file,
+    }: {
+      courseId: number;
+      title: string;
+      url: string;
+      description: string;
+      file: File | null;
+    }) => {
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) throw new Error("Titlu material invalid.");
+      const trimmedUrl = url.trim();
+      if (!file && !trimmedUrl) throw new Error("Trebuie sa incarci un fisier sau sa pui un URL.");
+
+      let finalUrl = trimmedUrl;
+      if (file) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const path = `course-${courseId}/${Date.now()}-${safeName}`;
+        const uploadRes = await supabase.storage.from("course-materials").upload(path, file, { upsert: false, contentType: file.type });
+        if (uploadRes.error) {
+          throw new Error(
+            `Upload esuat: ${uploadRes.error.message}. Verifica daca exista bucket-ul "course-materials" (public) in Supabase Storage.`
+          );
+        }
+        const publicUrl = supabase.storage.from("course-materials").getPublicUrl(path).data.publicUrl;
+        finalUrl = publicUrl;
+      }
+
+      const { error } = await supabase.from("course_materials").insert({
+        course_id: courseId,
+        teacher_id: profesorCheckQuery.data?.userId,
+        title: trimmedTitle,
+        description: description.trim() ? description.trim() : null,
+        url: finalUrl,
+      });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Material adaugat.");
+      await coursesQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
+  });
+
+  const approveRequestMutation = useMutation({
+    mutationFn: async (requestId: number) => {
+      const { error } = await supabase.rpc("approve_course_resource_request", { _request_id: requestId });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Cerere aprobata (din bonus profesor).");
+      await coursesQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
+  });
+
+  const rejectRequestMutation = useMutation({
+    mutationFn: async (requestId: number) => {
+      const { error } = await supabase.rpc("reject_course_resource_request", { _request_id: requestId });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Cerere respinsa.");
+      await coursesQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
+  });
+
+  const escalateRequestMutation = useMutation({
+    mutationFn: async (requestId: number) => {
+      const { error } = await supabase.rpc("escalate_course_resource_request", { _request_id: requestId });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      toast.success("Cerere trimisa la admin (escaladare).");
+      await coursesQuery.refetch();
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
   });
 
   const createCourseMutation = useMutation({
@@ -192,6 +327,8 @@ export default function ProfesorCursuriPage() {
 
   const courses = coursesQuery.data?.courses ?? [];
   const requirementsByCourse = coursesQuery.data?.requirementsByCourse ?? {};
+  const materialsByCourse = (coursesQuery.data as { materialsByCourse?: Record<number, CourseMaterialRow[]> } | undefined)?.materialsByCourse ?? {};
+  const requestsByCourse = (coursesQuery.data as { requestsByCourse?: Record<number, ResourceRequestRow[]> } | undefined)?.requestsByCourse ?? {};
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8">
@@ -408,6 +545,152 @@ export default function ProfesorCursuriPage() {
             </Table>
           </div>
         )}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
+        <h2 className="font-mono text-sm font-semibold text-foreground">Materiale (pe curs)</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Incarci PDF/DOCX (storage) sau adaugi un URL.</p>
+
+        {courses.map((c) => {
+          const mats = materialsByCourse[c.id] ?? [];
+          const draft = materialDraftByCourse[c.id] ?? { title: "", url: "", description: "" };
+          const file = materialFileByCourse[c.id] ?? null;
+
+          return (
+            <div key={`materials-${c.id}`} className="mt-4 rounded-md border border-border/70 bg-muted/10 p-4">
+              <div className="font-mono text-xs text-muted-foreground">Curs #{c.id}</div>
+              <div className="text-sm font-medium text-foreground">{c.title}</div>
+
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Titlu</label>
+                  <input
+                    value={draft.title}
+                    onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, title: e.target.value } }))}
+                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Fisier (PDF/DOCX)</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={(e) => setMaterialFileByCourse((prev) => ({ ...prev, [c.id]: e.target.files?.[0] ?? null }))}
+                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                  />
+                  {file ? <div className="mt-1 text-[11px] text-muted-foreground">{file.name}</div> : null}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">URL (optional)</label>
+                  <input
+                    value={draft.url}
+                    onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, url: e.target.value } }))}
+                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                    placeholder="https://..."
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <label className="text-xs font-medium text-muted-foreground">Descriere</label>
+                  <input
+                    value={draft.description}
+                    onChange={(e) =>
+                      setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, description: e.target.value } }))
+                    }
+                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  disabled={addMaterialMutation.isPending}
+                  onClick={() =>
+                    addMaterialMutation.mutate({ courseId: c.id, title: draft.title, url: draft.url, description: draft.description, file })
+                  }
+                  className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+                >
+                  Adauga material
+                </button>
+              </div>
+
+              <div className="mt-3 text-xs text-muted-foreground">Materiale curente: {mats.length}</div>
+              {mats.length ? (
+                <div className="mt-2 space-y-1">
+                  {mats.slice(0, 5).map((m) => (
+                    <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="block text-xs text-foreground underline">
+                      {m.title}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
+        <h2 className="font-mono text-sm font-semibold text-foreground">Cereri resurse suplimentare (aprobare)</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Aprobi din bonus 10%. Daca bonusul nu ajunge, folosesti „Trimite la admin”.
+        </p>
+
+        {courses.map((c) => {
+          const reqRequests = (requestsByCourse[c.id] ?? []).filter((r) => r.status === "pending" || r.status === "escalated");
+          return (
+            <div key={`requests-${c.id}`} className="mt-4 rounded-md border border-border/70 bg-muted/10 p-4">
+              <div className="font-mono text-xs text-muted-foreground">Curs #{c.id}</div>
+              <div className="text-sm font-medium text-foreground">{c.title}</div>
+
+              <div className="mt-3 text-xs text-muted-foreground">Cereri (pending/escalated): {reqRequests.length}</div>
+              {reqRequests.length ? (
+                <div className="mt-2 space-y-2">
+                  {reqRequests.slice(0, 10).map((r) => (
+                    <div key={r.id} className="rounded-md border border-border/70 bg-card p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-mono text-xs text-muted-foreground">#{r.id}</div>
+                        <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                        <span className="rounded-md bg-muted/30 px-2 py-1">{r.resource_type}</span>
+                        <span className="rounded-md bg-muted/30 px-2 py-1">cantitate: {r.requested_amount}</span>
+                        <span className="rounded-md bg-muted/30 px-2 py-1">status: {r.status}</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={approveRequestMutation.isPending}
+                          onClick={() => approveRequestMutation.mutate(r.id)}
+                          className="bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+                        >
+                          Aproba (bonus)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={escalateRequestMutation.isPending}
+                          onClick={() => escalateRequestMutation.mutate(r.id)}
+                          className="bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
+                        >
+                          Trimite la admin
+                        </button>
+                        <button
+                          type="button"
+                          disabled={rejectRequestMutation.isPending}
+                          onClick={() => rejectRequestMutation.mutate(r.id)}
+                          className="bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
+                        >
+                          Respinge
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista cereri.</div>
+              )}
+            </div>
+          );
+        })}
       </section>
     </main>
   );
