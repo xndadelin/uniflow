@@ -443,22 +443,27 @@ function AdminResurseInner() {
     (dataQuery.data as { escalatedRequests?: ResourceRequestRow[] } | undefined)?.escalatedRequests ?? [];
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-8 md:px-6">
-      <header className="mb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Admin</p>
-        <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">Resurse & distributie</h1>
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 pb-14 md:px-6">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Admin</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Resurse</h1>
+          <p className="text-sm text-muted-foreground">Activități, alocări și escalări per curs.</p>
+        </div>
+        <Button asChild size="sm" variant="outline">
+          <Link href="/admin">Inapoi</Link>
+        </Button>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[360px_1fr] lg:items-start">
-        {/* Sidebar */}
         <aside className="lg:sticky lg:top-20">
-          <section className="rounded-lg border border-border/70 bg-card p-4 shadow-2xs">
+          <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold tracking-tight text-foreground">Context</div>
               </div>
-              <Link href="/admin" className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground">
-                Dashboard
+              <Link href="/admin" className="text-xs text-muted-foreground hover:text-foreground">
+                Inapoi
               </Link>
             </div>
 
@@ -469,7 +474,7 @@ function AdminResurseInner() {
                 </div>
               </div>
 
-              <div className="mt-3 overflow-hidden rounded-md border border-border/60">
+              <div className="mt-3 overflow-hidden rounded-md border border-border/60 bg-muted/10">
                 {courses.length === 0 ? (
                   <div className="p-3 text-sm text-muted-foreground">Nu există cursuri.</div>
                 ) : (
@@ -510,7 +515,7 @@ function AdminResurseInner() {
                   }}
                 />
               </div>
-              <div className="mt-3 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+              <div className="mt-3 rounded-md border border-border/60 bg-muted/10 p-3 text-sm text-muted-foreground">
                 Selectează un curs pentru a vedea activități/alocări/escalări.
               </div>
             </div>
@@ -538,7 +543,7 @@ function AdminResurseInner() {
             </div>
           </section>
 
-          <section className="mt-4 rounded-lg border border-border/70 bg-card p-4 shadow-2xs">
+          <section className="mt-4 rounded-lg border border-border/60 bg-card p-5 shadow-sm">
             <div className="text-sm font-semibold tracking-tight text-foreground">Tipuri resurse</div>
             <p className="mt-2 text-xs text-muted-foreground">
               Enum: <span className="font-mono">tokens</span>, <span className="font-mono">vps_subscription</span>.
@@ -546,8 +551,7 @@ function AdminResurseInner() {
           </section>
         </aside>
 
-        {/* Main panel */}
-        <section className="rounded-lg border border-border/70 bg-card p-4 shadow-2xs md:p-6">
+        <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm md:p-6">
           {view === "activities" ? (
             <>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">

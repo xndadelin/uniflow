@@ -335,14 +335,12 @@ export default function AuditPage() {
   const activityTitlesById = (logsQuery.data as { activityTitlesById?: Record<string, string> } | undefined)?.activityTitlesById ?? {};
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 md:px-6">
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 pb-14 md:px-6">
       <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+        <div className="space-y-1">
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Audit</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Jurnalizare</h1>
-          <p className="mt-2 max-w-4xl text-sm text-muted-foreground">
-            Evenimente generate automat (roluri, cereri resurse, materiale, teme, submisii).
-          </p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Jurnal</h1>
+          <p className="text-sm text-muted-foreground">Evenimente generate automat.</p>
         </div>
         <Button asChild variant="outline" size="sm">
           <Link href="/">Inapoi</Link>

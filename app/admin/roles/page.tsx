@@ -8,6 +8,7 @@ import { createClient } from "@/utils/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Pagination } from "@/components/Pagination";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type AppUser = {
   id: string;
@@ -189,155 +190,170 @@ export default function AdminRolesPage() {
   const roleMap = new Map(roles.map((role) => [role.id, role]));
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8">
-      <header className="mb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Admin</p>
-        <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">Gestionare roluri</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Atribuire, modificare si revocare roluri cu restrictii RLS.</p>
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 pb-14 md:px-6">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Admin</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Roluri</h1>
+          <p className="text-sm text-muted-foreground">Atribuire, modificare și revocare roluri.</p>
+        </div>
+        <Button asChild size="sm" variant="outline">
+          <Link href="/admin">Inapoi</Link>
+        </Button>
       </header>
 
-      <section className="bg-card p-4 md:p-6">
+      <Card className="shadow-sm">
+        <CardHeader className="space-y-2 pb-4">
+          <CardTitle className="text-base font-semibold tracking-tight">Utilizatori</CardTitle>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="text-xs text-muted-foreground">
+              Total: <span className="font-mono text-foreground">{usersCount}</span>
+            </div>
+            <Pagination
+              variant="compact"
+              page={usersPage}
+              pageSize={usersPageSize}
+              totalItems={usersCount}
+              onPageChange={(p) => setUsersPage(p)}
+              onPageSizeChange={(s) => {
+                setUsersPageSize(s);
+                setUsersPage(1);
+              }}
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="p-0 pb-2">
         {rolesDataQuery.isLoading ? (
-          <p className="text-sm text-muted-foreground">Se incarca utilizatorii...</p>
+          <div className="px-5 pb-5 text-sm text-muted-foreground">Se incarca utilizatorii...</div>
         ) : (
           <>
-            <div className="mb-4">
-              <Pagination
-                variant="compact"
-                page={usersPage}
-                pageSize={usersPageSize}
-                totalItems={usersCount}
-                onPageChange={(p) => setUsersPage(p)}
-                onPageSizeChange={(s) => {
-                  setUsersPageSize(s);
-                  setUsersPage(1);
-                }}
-              />
-            </div>
-
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[64px] text-center">#</TableHead>
-                  <TableHead>Nume</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Roluri</TableHead>
-                  <TableHead className="w-[280px]">Actiuni</TableHead>
-                </TableRow>
-              </TableHeader>
-
-              <TableBody>
-                {users.length === 0 ? (
+            <div className="overflow-hidden border-t border-border/60 pt-2">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
-                      Nu exista utilizatori.
-                    </TableCell>
+                    <TableHead className="w-[64px] px-5 py-4 text-center">#</TableHead>
+                    <TableHead className="px-5 py-4">Nume</TableHead>
+                    <TableHead className="px-5 py-4">Email</TableHead>
+                    <TableHead className="px-5 py-4">Roluri</TableHead>
+                    <TableHead className="w-[280px] px-5 py-4">Actiuni</TableHead>
                   </TableRow>
-                ) : (
-                  users.map((user, idx) => {
-                    const assignedRoleIds = rolesByUser[user.id] ?? [];
-                    const selectedRole = selectedRoleByUser[user.id] ?? roles[0]?.id;
+                </TableHeader>
 
-                    return (
-                      <TableRow key={user.id}>
-                        <TableCell className="text-center font-mono text-xs text-muted-foreground">
-                          {(usersPage - 1) * usersPageSize + idx + 1}
-                        </TableCell>
+                <TableBody>
+                  {users.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
+                        Nu exista utilizatori.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    users.map((user, idx) => {
+                      const assignedRoleIds = rolesByUser[user.id] ?? [];
+                      const selectedRole = selectedRoleByUser[user.id] ?? roles[0]?.id;
 
-                        <TableCell className="min-w-[180px]">
-                          <div className="space-y-0.5">
-                            <p className="text-sm font-medium text-foreground">{user.full_name || "—"}</p>
-                            <p className="font-mono text-[11px] text-muted-foreground">{user.id}</p>
-                          </div>
-                        </TableCell>
+                      return (
+                        <TableRow key={user.id} className="hover:bg-muted/20">
+                          <TableCell className="px-5 py-4 text-center font-mono text-xs text-muted-foreground">
+                            {(usersPage - 1) * usersPageSize + idx + 1}
+                          </TableCell>
 
-                        <TableCell className="min-w-[220px] text-sm text-muted-foreground">{user.email}</TableCell>
-
-                        <TableCell className="min-w-[260px]">
-                          <div className="flex flex-wrap gap-2">
-                            {assignedRoleIds.length === 0 ? (
-                              <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-muted-foreground">fara rol</span>
-                            ) : (
-                              assignedRoleIds.map((roleId) => {
-                                const role = roleMap.get(roleId);
-
-                                return (
-                                  <button
-                                    key={`${user.id}-${roleId}`}
-                                    type="button"
-                                    onClick={() => mutateRoles.mutate({ action: "revoke", userId: user.id, roleId })}
-                                    disabled={mutateRoles.isPending}
-                                    className="inline-flex items-center gap-1 rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground transition hover:bg-muted/50 disabled:opacity-50"
-                                    title="Click pentru revocare"
-                                  >
-                                    <span>{role?.name ?? `rol-${roleId}`}</span>
-                                    <span className="text-muted-foreground">×</span>
-                                  </button>
-                                );
-                              })
-                            )}
-                          </div>
-                        </TableCell>
-
-                        <TableCell className="min-w-[280px]">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                            <select
-                              value={selectedRole ?? ""}
-                              onChange={(event) =>
-                                setSelectedRoleByUser((prev) => ({
-                                  ...prev,
-                                  [user.id]: Number(event.target.value),
-                                }))
-                              }
-                              className="h-10 w-full min-w-[160px] rounded-md border border-input/60 bg-card px-3 text-sm text-foreground outline-none focus:border-ring sm:w-auto"
-                            >
-                              {roles.map((role) => (
-                                <option key={role.id} value={role.id}>
-                                  {role.name}
-                                </option>
-                              ))}
-                            </select>
-
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                disabled={mutateRoles.isPending || !selectedRole}
-                                onClick={() =>
-                                  selectedRole &&
-                                  mutateRoles.mutate({ action: "assign", userId: user.id, roleId: selectedRole })
-                                }
-                                className="h-10 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-                              >
-                                Atribuie
-                              </button>
-
-                              <button
-                                type="button"
-                                disabled={mutateRoles.isPending || !selectedRole}
-                                onClick={() => {
-                                  if (!selectedRole) return;
-                                  const ok = window.confirm(
-                                    "Modificare rol: aceasta actiune va sterge rolurile curente si va seta doar rolul selectat. Continui?"
-                                  );
-                                  if (!ok) return;
-                                  mutateRoles.mutate({ action: "replace", userId: user.id, roleId: selectedRole });
-                                }}
-                                className="h-10 whitespace-nowrap rounded-md bg-muted/30 px-3 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
-                              >
-                                Modifica
-                              </button>
+                          <TableCell className="min-w-[180px] px-5 py-4">
+                            <div className="space-y-0.5">
+                              <p className="text-sm font-medium text-foreground">{user.full_name || "—"}</p>
+                              <p className="font-mono text-[11px] text-muted-foreground">{user.id}</p>
                             </div>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+                          </TableCell>
+
+                          <TableCell className="min-w-[220px] px-5 py-4 text-sm text-muted-foreground">{user.email}</TableCell>
+
+                          <TableCell className="min-w-[260px] px-5 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              {assignedRoleIds.length === 0 ? (
+                                <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-muted-foreground">fara rol</span>
+                              ) : (
+                                assignedRoleIds.map((roleId) => {
+                                  const role = roleMap.get(roleId);
+
+                                  return (
+                                    <button
+                                      key={`${user.id}-${roleId}`}
+                                      type="button"
+                                      onClick={() => mutateRoles.mutate({ action: "revoke", userId: user.id, roleId })}
+                                      disabled={mutateRoles.isPending}
+                                      className="inline-flex items-center gap-1 rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground transition hover:bg-muted/50 disabled:opacity-50"
+                                      title="Click pentru revocare"
+                                    >
+                                      <span>{role?.name ?? `rol-${roleId}`}</span>
+                                      <span className="text-muted-foreground">×</span>
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </TableCell>
+
+                          <TableCell className="min-w-[280px] px-5 py-4">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                              <select
+                                value={selectedRole ?? ""}
+                                onChange={(event) =>
+                                  setSelectedRoleByUser((prev) => ({
+                                    ...prev,
+                                    [user.id]: Number(event.target.value),
+                                  }))
+                                }
+                                className="h-10 w-full min-w-[160px] rounded-md border border-input/60 bg-card px-3 text-sm text-foreground outline-none focus:border-ring sm:w-auto"
+                              >
+                                {roles.map((role) => (
+                                  <option key={role.id} value={role.id}>
+                                    {role.name}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={mutateRoles.isPending || !selectedRole}
+                                  onClick={() =>
+                                    selectedRole &&
+                                    mutateRoles.mutate({ action: "assign", userId: user.id, roleId: selectedRole })
+                                  }
+                                >
+                                  Atribuie
+                                </Button>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={mutateRoles.isPending || !selectedRole}
+                                  onClick={() => {
+                                    if (!selectedRole) return;
+                                    const ok = window.confirm(
+                                      "Modificare rol: aceasta actiune va sterge rolurile curente si va seta doar rolul selectat. Continui?"
+                                    );
+                                    if (!ok) return;
+                                    mutateRoles.mutate({ action: "replace", userId: user.id, roleId: selectedRole });
+                                  }}
+                                >
+                                  Modifica
+                                </Button>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </>
         )}
-      </section>
+        </CardContent>
+      </Card>
     </main>
   );
 }

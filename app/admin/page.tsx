@@ -141,188 +141,225 @@ export default function AdminHomePage() {
     .filter((x) => x.missing.length > 0);
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8">
-      <header className="mb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Admin</p>
-        <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Alege rapid ce vrei sa faci. Prioritar: cursurile fara alocari.</p>
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 pb-14 md:px-6">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Admin</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Dashboard</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link href="/admin/resurse">Deschide resurse</Link>
+          </Button>
+        </div>
       </header>
 
-      <div className="grid gap-8 md:grid-cols-2 md:items-start">
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-mono text-sm">Actiuni rapide</CardTitle>
+      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-md border border-border/60 bg-muted/10 px-4 py-3">
+          <div className="text-xs text-muted-foreground">Cursuri</div>
+          <div className="mt-1 font-mono text-2xl text-foreground">{courses.length}</div>
+        </div>
+        <div className="rounded-md border border-border/60 bg-muted/10 px-4 py-3">
+          <div className="text-xs text-muted-foreground">Necesită alocare</div>
+          <div className="mt-1 font-mono text-2xl text-foreground">{coursesNeedingAllocation.length}</div>
+        </div>
+        <div className="rounded-md border border-border/60 bg-muted/10 px-4 py-3">
+          <div className="text-xs text-muted-foreground">Escalări</div>
+          <div className="mt-1 font-mono text-2xl text-foreground">{escalated.length}</div>
+        </div>
+      </div>
+
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { href: "/admin/inventar", title: "Inventar", desc: "total resurse" },
+          { href: "/admin/roles", title: "Roluri", desc: "utilizatori" },
+          { href: "/admin/resurse", title: "Resurse", desc: "alocări & activități" },
+          { href: "/admin/statistici", title: "Statistici", desc: "utilizare resurse" },
+        ].map((x) => (
+          <Link
+            key={x.href}
+            href={x.href}
+            className="group rounded-lg border border-border/60 bg-card px-4 py-4 transition hover:border-border hover:bg-muted/5"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-foreground">{x.title}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{x.desc}</div>
+              </div>
+              <span className="text-xs text-muted-foreground transition group-hover:text-foreground">→</span>
+            </div>
+          </Link>
+        ))}
+      </section>
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-2 lg:items-start">
+        <Card className="shadow-sm">
+          <CardHeader className="space-y-1 pb-4">
+            <CardTitle className="text-base font-semibold tracking-tight">Necesită alocare</CardTitle>
+            <p className="text-xs text-muted-foreground">Cursuri cu necesar setat, dar fără alocare completă.</p>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/admin/inventar">
-                <span>Inventar global</span>
-                <span className="text-xs text-muted-foreground">total resurse</span>
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/admin/roles">
-                <span>Roluri</span>
-                <span className="text-xs text-muted-foreground">user roles</span>
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/admin/resurse">
-                <span>Alocare & activitati</span>
-                <span className="text-xs text-muted-foreground">per curs</span>
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/admin/statistici">
-                <span>Statistici</span>
-                <span className="text-xs text-muted-foreground">resurse</span>
-              </Link>
-            </Button>
+          <CardContent className="p-0 pb-2">
+            {dashboardQuery.isLoading ? (
+              <div className="px-5 pb-5 text-sm text-muted-foreground">Se incarca...</div>
+            ) : dashboardQuery.isError ? (
+              <div className="px-5 pb-5 text-sm text-destructive">Eroare la incarcare.</div>
+            ) : coursesNeedingAllocation.length === 0 ? (
+              <div className="px-5 pb-5 text-sm text-muted-foreground">Totul e alocat.</div>
+            ) : (
+              <div className="overflow-hidden border-t border-border/60 pt-2">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="px-5 py-4">Curs</TableHead>
+                      <TableHead className="px-5 py-4">Lipsește</TableHead>
+                      <TableHead className="px-5 py-4 text-right">Acțiune</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {coursesNeedingAllocation.slice(0, 8).map(({ course, missing }) => (
+                      <TableRow key={course.id} className="hover:bg-muted/20">
+                        <TableCell className="px-5 py-4">
+                          <div className="text-sm font-medium text-foreground">
+                            #{course.id} · {course.title}
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">max: {course.max_students}</div>
+                        </TableCell>
+                        <TableCell className="px-5 py-4">
+                          <div className="flex flex-wrap gap-2">
+                            {missing.map((m) => (
+                              <Badge key={`${course.id}-${m.resource_type}`} variant="secondary">
+                                {m.resource_type}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-5 py-4 text-right">
+                          <Button asChild size="sm" variant="outline">
+                            <Link href={`/admin/resurse?courseId=${course.id}`}>Deschide</Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {coursesNeedingAllocation.length > 8 ? (
+                  <div className="flex items-center justify-between border-t border-border/60 px-5 py-4">
+                    <div className="text-xs text-muted-foreground">
+                      Afișate: <span className="font-mono text-foreground">8</span> / {coursesNeedingAllocation.length}
+                    </div>
+                    <Button asChild size="sm" variant="ghost">
+                      <Link href="/admin/resurse">Vezi toate</Link>
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-mono text-sm">Necesita alocare</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Cursuri cu necesar setat, dar fara alocare completa.
-              <span className="ml-2 font-mono text-foreground">{coursesNeedingAllocation.length}</span>
-            </p>
+        <Card className="shadow-sm">
+          <CardHeader className="space-y-1 pb-4">
+            <CardTitle className="text-base font-semibold tracking-tight">Escalări la admin</CardTitle>
+            <p className="text-xs text-muted-foreground">Cereri escaladate de profesori.</p>
           </CardHeader>
-          <CardContent>
-
-        {dashboardQuery.isLoading ? (
-          <div className="text-sm text-muted-foreground">Se incarca...</div>
-        ) : dashboardQuery.isError ? (
-          <div className="text-sm text-destructive">Eroare la incarcare.</div>
-        ) : coursesNeedingAllocation.length === 0 ? (
-          <div className="text-sm text-muted-foreground">Nu exista cursuri cu necesar setat si fara alocare.</div>
-        ) : (
-          <div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Curs</TableHead>
-                  <TableHead>Lipsa alocare</TableHead>
-                  <TableHead className="text-right">Actiune</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {coursesNeedingAllocation.map(({ course, missing }) => (
-                  <TableRow key={course.id}>
-                    <TableCell>
+          <CardContent className="p-0 pb-2">
+            {dashboardQuery.isLoading ? (
+              <div className="px-5 pb-5 text-sm text-muted-foreground">Se incarca...</div>
+            ) : dashboardQuery.isError ? (
+              <div className="px-5 pb-5 text-sm text-destructive">Eroare la incarcare.</div>
+            ) : escalated.length === 0 ? (
+              <div className="px-5 pb-5 text-sm text-muted-foreground">Nu există escalări.</div>
+            ) : (
+              <div className="divide-y divide-border/50 border-t border-border/60 pt-2">
+                {escalated.slice(0, 8).map((r) => {
+                  const c = courses.find((x) => x.id === r.course_id);
+                  return (
+                    <div key={r.id} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-1">
-                        <div className="text-sm font-medium">#{course.id} · {course.title}</div>
-                        <div className="text-[11px] text-muted-foreground">max: {course.max_students}</div>
+                        <div className="text-sm font-medium text-foreground">
+                          #{r.id} · {c ? `${c.title}` : `Curs #${r.course_id}`}
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <span className="font-mono">course#{r.course_id}</span>
+                          <span>·</span>
+                          <span className="font-mono">{r.resource_type}</span>
+                          <span>·</span>
+                          <span className="font-mono">+{r.requested_amount}</span>
+                        </div>
                       </div>
-                    </TableCell>
-                    <TableCell className="space-x-2">
-                      {missing.map((m) => (
-                        <Badge key={`${course.id}-${m.resource_type}`} variant="secondary">
-                          {m.resource_type}
-                        </Badge>
-                      ))}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button asChild size="sm">
-                        <Link href={`/admin/resurse?courseId=${course.id}`}>Deschide</Link>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/admin/resurse?courseId=${r.course_id}`}>Deschide</Link>
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+                    </div>
+                  );
+                })}
+                {escalated.length > 8 ? (
+                  <div className="flex items-center justify-between px-5 py-4">
+                    <div className="text-xs text-muted-foreground">
+                      Afișate: <span className="font-mono text-foreground">8</span> / {escalated.length}
+                    </div>
+                    <Button asChild size="sm" variant="ghost">
+                      <Link href="/admin/resurse">Vezi în Resurse</Link>
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      <Card className="mt-8">
-        <CardHeader>
-          <CardTitle className="font-mono text-sm">Escalari la admin</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Cereri escaladate de profesori (cand bonusul 10% nu ajunge). Total:{" "}
-            <span className="font-mono text-foreground">{escalated.length}</span>
-          </p>
+      <Card className="mt-8 shadow-sm">
+        <CardHeader className="flex flex-col gap-2 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <CardTitle className="text-base font-semibold tracking-tight">Cursuri (ultimele)</CardTitle>
+            <p className="text-xs text-muted-foreground">Intră pe un curs pentru alocări și activități.</p>
+          </div>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/admin/resurse">Toate cursurile</Link>
+          </Button>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0 pb-2">
           {dashboardQuery.isLoading ? (
-            <div className="text-sm text-muted-foreground">Se incarca...</div>
+            <div className="px-5 pb-5 text-sm text-muted-foreground">Se incarca...</div>
           ) : dashboardQuery.isError ? (
-            <div className="text-sm text-destructive">Eroare la incarcare.</div>
-          ) : escalated.length === 0 ? (
-            <div className="text-sm text-muted-foreground">Nu exista cereri escaladate.</div>
+            <div className="px-5 pb-5 text-sm text-destructive">Eroare la incarcare.</div>
+          ) : courses.length === 0 ? (
+            <div className="px-5 pb-5 text-sm text-muted-foreground">Nu exista cursuri.</div>
           ) : (
-            <div className="overflow-hidden rounded-md bg-muted/10 divide-y divide-border/20">
-              {escalated.map((r) => {
-                const c = courses.find((x) => x.id === r.course_id);
-                return (
-                  <div key={r.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                      <div className="text-sm font-medium">
-                        #{r.id} · {c ? `Curs #${c.id} · ${c.title}` : `Curs #${r.course_id}`}
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        <Badge variant="outline">{r.resource_type}</Badge>
-                        <Badge variant="outline">cantitate: {r.requested_amount}</Badge>
-                      </div>
-                    </div>
-                    <Button asChild size="sm" variant="outline">
-                      <Link href={`/admin/resurse?courseId=${r.course_id}`}>Deschide</Link>
-                    </Button>
-                  </div>
-                );
-              })}
+            <div className="overflow-hidden border-t border-border/60 pt-2">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="px-5 py-4">Curs</TableHead>
+                    <TableHead className="px-5 py-4 text-right">Max</TableHead>
+                    <TableHead className="px-5 py-4 text-right">Creat</TableHead>
+                    <TableHead className="px-5 py-4 text-right">Acțiune</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {courses.slice(0, 10).map((c) => (
+                    <TableRow key={c.id} className="hover:bg-muted/20">
+                      <TableCell className="px-5 py-4">
+                        <div className="text-sm font-medium text-foreground">
+                          #{c.id} · {c.title}
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-5 py-4 text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
+                      <TableCell className="px-5 py-4 text-right text-xs text-muted-foreground">
+                        {new Date(c.created_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="px-5 py-4 text-right">
+                        <Button asChild size="sm" variant="ghost">
+                          <Link href={`/admin/resurse?courseId=${c.id}`}>Gestionează</Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
-        </CardContent>
-      </Card>
-
-      <Card className="mt-8">
-        <CardHeader>
-          <CardTitle className="font-mono text-sm">Toate cursurile</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Intri direct pe un curs ca sa modifici alocari si activitati. Total:{" "}
-            <span className="font-mono text-foreground">{courses.length}</span>
-          </p>
-        </CardHeader>
-        <CardContent>
-
-        {dashboardQuery.isLoading ? (
-          <div className="text-sm text-muted-foreground">Se incarca...</div>
-        ) : dashboardQuery.isError ? (
-          <div className="text-sm text-destructive">Eroare la incarcare.</div>
-        ) : courses.length === 0 ? (
-          <div className="text-sm text-muted-foreground">Nu exista cursuri.</div>
-        ) : (
-          <div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Curs</TableHead>
-                  <TableHead className="text-right">Max studenti</TableHead>
-                  <TableHead className="text-right">Creat la</TableHead>
-                  <TableHead className="text-right">Actiune</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {courses.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="text-sm font-medium text-foreground">#{c.id} · {c.title}</TableCell>
-                    <TableCell className="text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">{new Date(c.created_at).toLocaleString()}</TableCell>
-                    <TableCell className="text-right">
-                      <Button asChild size="sm" variant="outline">
-                        <Link href={`/admin/resurse?courseId=${c.id}`}>Gestioneaza</Link>
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
         </CardContent>
       </Card>
     </main>

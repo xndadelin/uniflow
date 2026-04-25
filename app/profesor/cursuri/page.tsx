@@ -222,18 +222,18 @@ export default function ProfesorCursuriPage() {
   const requirementsByCourse = coursesQuery.data?.requirementsByCourse ?? {};
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Profesor</p>
-          <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">Cursuri</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Creeaza cursuri si defineste resursele digitale necesare.</p>
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 pb-14 md:px-6">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Profesor</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Cursuri</h1>
+          <p className="text-sm text-muted-foreground">Creează cursuri și definește resursele digitale necesare.</p>
         </div>
       </header>
 
-      <section className="rounded-lg border border-border bg-card p-4 md:p-6">
+      <section className="rounded-lg border border-border/60 bg-card p-5 shadow-sm md:p-6">
         <div className="flex flex-col gap-1">
-          <h2 className="font-mono text-sm font-semibold text-foreground">Creeaza curs</h2>
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">Creeaza curs</h2>
           <p className="text-xs text-muted-foreground">
             Defineste necesarul de resurse. La alocare, administratorul adauga automat un bonus de <span className="font-semibold text-foreground">10%</span>.
           </p>
@@ -246,7 +246,7 @@ export default function ProfesorCursuriPage() {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Ex: Inteligenta Artificiala"
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              className="mt-1 w-full rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
             />
           </div>
 
@@ -256,7 +256,7 @@ export default function ProfesorCursuriPage() {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Scurt rezumat..."
-              className="mt-1 min-h-[90px] w-full resize-y border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+              className="mt-1 min-h-[90px] w-full resize-y rounded-md border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
             />
           </div>
 

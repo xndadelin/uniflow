@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { ChartContainer, ChartLegend, ChartTooltip } from "@/components/ui/chart";
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis, YAxis } from "recharts";
 
 type ResourceType = "tokens" | "vps_subscription";
@@ -265,13 +265,19 @@ export default function AdminStatisticiPage() {
     { name: "Abonamente ramase", value: Math.max(0, totals.vps_subscription.allocated - totals.vps_subscription.used), fill: "hsl(var(--muted))" },
   ];
 
+  const activityChartConfig = { used: { label: "Token-uri", color: "hsl(var(--primary))" } };
+  const pieConfig = {
+    used: { label: "Folosite", color: "hsl(var(--primary))" },
+    remaining: { label: "Ramase", color: "hsl(var(--muted))" },
+  };
+
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-8 md:px-6">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Admin</p>
-          <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">Statistici resurse</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Student / Curs / Universitate.</p>
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10 pb-14 md:px-6">
+      <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Admin</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Statistici</h1>
+          <p className="text-sm text-muted-foreground">Student / Curs / Universitate.</p>
         </div>
         <Button asChild variant="outline" size="sm">
           <Link href="/admin">Inapoi</Link>
@@ -301,7 +307,7 @@ export default function AdminStatisticiPage() {
       </div>
 
       {view === "course" ? (
-        <Card className="mb-6">
+        <Card className="mb-6 shadow-sm">
           <CardHeader>
             <CardTitle className="text-sm font-semibold">Filtru curs</CardTitle>
           </CardHeader>
@@ -318,7 +324,7 @@ export default function AdminStatisticiPage() {
       ) : null}
 
       {view === "student" ? (
-        <Card className="mb-6">
+        <Card className="mb-6 shadow-sm">
           <CardHeader>
             <CardTitle className="text-sm font-semibold">Filtru student</CardTitle>
           </CardHeader>
@@ -350,7 +356,7 @@ export default function AdminStatisticiPage() {
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
+          <Card className="shadow-sm">
             <CardHeader className="space-y-1">
               <CardTitle className="text-base font-semibold tracking-tight">Sumar</CardTitle>
               <p className="text-xs text-muted-foreground">Alocări vs. consum.</p>
@@ -373,7 +379,7 @@ export default function AdminStatisticiPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="shadow-sm">
             <CardHeader className="space-y-1">
               <CardTitle className="text-base font-semibold tracking-tight">Token-uri folosite pe activitate</CardTitle>
             </CardHeader>
@@ -383,13 +389,13 @@ export default function AdminStatisticiPage() {
               ) : (
                 <div className="space-y-4">
                   <div className="rounded-md border border-border/60 bg-muted/10 p-3">
-                    <ChartContainer className="h-[260px] w-full">
+                    <ChartContainer className="h-[260px] w-full" config={activityChartConfig}>
                       <BarChart data={byActivityChart} margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                         <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-20} height={60} />
                         <YAxis tick={{ fontSize: 11 }} />
-                        <ChartTooltip />
-                        <ChartLegend />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <ChartLegend content={<ChartLegendContent />} />
                         <Bar dataKey="used" name="Token-uri" radius={[6, 6, 0, 0]}>
                           {byActivityChart.map((_, idx) => (
                             <Cell key={idx} fill="hsl(var(--primary))" opacity={0.85} />
@@ -435,13 +441,12 @@ export default function AdminStatisticiPage() {
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-[320px_1fr] md:items-center">
               <div className="rounded-md border border-border/60 bg-muted/10 p-3">
-                <ChartContainer className="h-[240px] w-full" aspect="square">
+                <ChartContainer className="h-[240px] w-full" aspect="square" config={pieConfig}>
                   <PieChart>
-                    <ChartTooltip />
+                    <ChartTooltip content={<ChartTooltipContent />} />
                     <Pie data={allocationChartTokens} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
-                      {allocationChartTokens.map((x) => (
-                        <Cell key={x.name} fill={x.fill} />
-                      ))}
+                      <Cell fill="var(--color-used)" />
+                      <Cell fill="var(--color-remaining)" />
                     </Pie>
                   </PieChart>
                 </ChartContainer>
@@ -469,13 +474,12 @@ export default function AdminStatisticiPage() {
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-[320px_1fr] md:items-center">
               <div className="rounded-md border border-border/60 bg-muted/10 p-3">
-                <ChartContainer className="h-[240px] w-full" aspect="square">
+                <ChartContainer className="h-[240px] w-full" aspect="square" config={pieConfig}>
                   <PieChart>
-                    <ChartTooltip />
+                    <ChartTooltip content={<ChartTooltipContent />} />
                     <Pie data={allocationChartVps} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
-                      {allocationChartVps.map((x) => (
-                        <Cell key={x.name} fill={x.fill} />
-                      ))}
+                      <Cell fill="var(--color-used)" />
+                      <Cell fill="var(--color-remaining)" />
                     </Pie>
                   </PieChart>
                 </ChartContainer>
