@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
@@ -20,6 +21,15 @@ type EnrollmentRow = {
   course_id: number;
   enrolled_at: string;
 };
+
+function getErrorMessage(err: unknown) {
+  if (!err) return "Eroare necunoscuta.";
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && "message" in err && typeof (err as { message?: unknown }).message === "string") {
+    return (err as { message: string }).message;
+  }
+  return "Eroare la request.";
+}
 
 export function StudentHome() {
   const supabase = useMemo(() => createClient(), []);
@@ -63,6 +73,7 @@ export function StudentHome() {
   const courses = coursesQuery.data ?? [];
   const enrolledSet = new Set((enrollmentsQuery.data ?? []).map((e) => e.course_id));
   const enrolledCourses = courses.filter((c) => enrolledSet.has(c.id));
+  const availableCourses = courses.filter((c) => c.enrollment_open && !enrolledSet.has(c.id));
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
@@ -94,7 +105,9 @@ export function StudentHome() {
                   <TableRow key={c.id}>
                     <TableCell className="min-w-[260px]">
                       <div className="space-y-0.5">
-                        <div className="text-sm font-medium text-foreground">{c.title}</div>
+                          <Link href={`/cursuri/${c.id}`} className="text-sm font-medium text-foreground underline-offset-4 hover:underline">
+                            {c.title}
+                          </Link>
                         {c.description ? <div className="text-xs text-muted-foreground">{c.description}</div> : null}
                       </div>
                     </TableCell>
@@ -109,15 +122,15 @@ export function StudentHome() {
 
       <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
         <div className="flex flex-col gap-1">
-          <h2 className="font-mono text-sm font-semibold text-foreground">Toate cursurile</h2>
-          <p className="text-xs text-muted-foreground">Poti sa te inscrii doar la cursurile cu inscriere deschisa.</p>
+          <h2 className="font-mono text-sm font-semibold text-foreground">Cursuri disponibile</h2>
+          <p className="text-xs text-muted-foreground">Cursuri cu inscriere deschisa, la care nu esti inrolat inca.</p>
         </div>
 
         {coursesQuery.isLoading ? (
           <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
         ) : coursesQuery.isError ? (
           <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare la incarcarea cursurilor.
+            Eroare la incarcarea cursurilor: <span className="font-mono text-xs">{getErrorMessage(coursesQuery.error)}</span>
           </div>
         ) : (
           <div className="mt-4">
@@ -131,41 +144,38 @@ export function StudentHome() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {courses.length === 0 ? (
+                {availableCourses.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
-                      Nu exista cursuri.
+                      Nu exista cursuri disponibile pentru inscriere.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  courses.map((c) => {
-                    const isEnrolled = enrolledSet.has(c.id);
-                    const canEnroll = c.enrollment_open && !isEnrolled;
+                  availableCourses.map((c) => {
+                    const canEnroll = true;
                     return (
                       <TableRow key={c.id}>
                         <TableCell className="min-w-[260px]">
                           <div className="space-y-0.5">
-                            <div className="text-sm font-medium text-foreground">{c.title}</div>
+                            <Link href={`/cursuri/${c.id}`} className="text-sm font-medium text-foreground underline-offset-4 hover:underline">
+                              {c.title}
+                            </Link>
                             {c.description ? <div className="text-xs text-muted-foreground">{c.description}</div> : null}
                           </div>
                         </TableCell>
                         <TableCell className="text-center text-xs text-muted-foreground">
-                          {c.enrollment_open ? "Deschisa" : "Inchisa"}
+                          Deschisa
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
                         <TableCell className="text-right">
-                          {isEnrolled ? (
-                            <span className="text-xs font-semibold text-muted-foreground">Inrolat</span>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={!canEnroll || enrollMutation.isPending}
-                              onClick={() => enrollMutation.mutate(c.id)}
-                              className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-                            >
-                              Inroleaza-ma
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            disabled={!canEnroll || enrollMutation.isPending}
+                            onClick={() => enrollMutation.mutate(c.id)}
+                            className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
+                          >
+                            Inroleaza-ma
+                          </button>
                         </TableCell>
                       </TableRow>
                     );

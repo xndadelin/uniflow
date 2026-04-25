@@ -333,6 +333,10 @@ create table if not exists public.courses (
 
 create index if not exists courses_teacher_idx on public.courses(teacher_id);
 
+-- Migration helper for existing DBs (idempotent)
+alter table public.courses
+  add column if not exists enrollment_open boolean not null default true;
+
 drop trigger if exists courses_set_updated_at on public.courses;
 create trigger courses_set_updated_at
 before update on public.courses
@@ -366,6 +370,408 @@ create table if not exists public.course_enrollments (
 );
 
 create index if not exists course_enrollments_student_idx on public.course_enrollments(student_id);
+
+-- Auto-apply baseline grants whenever an enrollment is created (covers inserts not going through RPC).
+create or replace function public.handle_new_course_enrollment_apply_baseline()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.apply_baseline_grants_for_student(new.course_id, new.student_id);
+  return new;
+end;
+$$;
+
+drop trigger if exists on_course_enrollment_created_apply_baseline on public.course_enrollments;
+create trigger on_course_enrollment_created_apply_baseline
+after insert on public.course_enrollments
+for each row execute function public.handle_new_course_enrollment_apply_baseline();
+
+-- ============================================================
+-- Course page domain (materials, student resources, requests, homework, simulations)
+-- ============================================================
+
+-- Materials uploaded by teacher for a course
+create table if not exists public.course_materials (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  teacher_id uuid not null references public.app_users(id) on delete restrict,
+  title text not null,
+  description text,
+  url text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists course_materials_course_idx on public.course_materials(course_id);
+
+-- Student resources ledger per course (granted - consumed = remaining)
+create table if not exists public.course_student_resources (
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  resource_type public.digital_resource_type not null,
+  granted_amount integer not null default 0 check (granted_amount >= 0),
+  consumed_amount integer not null default 0 check (consumed_amount >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (course_id, student_id, resource_type)
+);
+
+create index if not exists course_student_resources_student_idx on public.course_student_resources(student_id);
+
+drop trigger if exists course_student_resources_set_updated_at on public.course_student_resources;
+create trigger course_student_resources_set_updated_at
+before update on public.course_student_resources
+for each row execute function public.set_updated_at();
+
+-- Requests for extra resources (student -> teacher pool)
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'course_resource_request_status') then
+    create type public.course_resource_request_status as enum ('pending', 'approved', 'rejected');
+  end if;
+end $$;
+
+create table if not exists public.course_resource_requests (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  resource_type public.digital_resource_type not null,
+  requested_amount integer not null check (requested_amount > 0),
+  status public.course_resource_request_status not null default 'pending',
+  decided_by uuid references public.app_users(id) on delete set null,
+  decided_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists course_resource_requests_course_idx on public.course_resource_requests(course_id);
+create index if not exists course_resource_requests_student_idx on public.course_resource_requests(student_id);
+
+-- Homework uploads (student submissions)
+create table if not exists public.course_homework_submissions (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  title text not null,
+  file_url text not null,
+  submitted_at timestamptz not null default now()
+);
+
+create index if not exists course_homework_course_idx on public.course_homework_submissions(course_id);
+create index if not exists course_homework_student_idx on public.course_homework_submissions(student_id);
+
+-- Token consumption simulation activities
+create table if not exists public.course_token_activities (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  tokens_used integer not null check (tokens_used > 0),
+  note text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists course_token_activities_course_idx on public.course_token_activities(course_id);
+create index if not exists course_token_activities_student_idx on public.course_token_activities(student_id);
+
+-- VPS validation simulation
+create table if not exists public.course_vps_validations (
+  id bigserial primary key,
+  course_id bigint not null references public.courses(id) on delete cascade,
+  student_id uuid not null references public.app_users(id) on delete cascade,
+  is_valid boolean not null default true,
+  note text,
+  validated_at timestamptz not null default now()
+);
+
+create index if not exists course_vps_validations_course_idx on public.course_vps_validations(course_id);
+create index if not exists course_vps_validations_student_idx on public.course_vps_validations(student_id);
+
+-- Helper: check enrollment
+create or replace function public.is_enrolled_in_course(_course_id bigint, _student_id uuid default auth.uid())
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.course_enrollments e
+    where e.course_id = _course_id
+      and e.student_id = _student_id
+  );
+$$;
+
+-- Student RPC: request extra resources
+create or replace function public.request_course_resources(
+  _course_id bigint,
+  _resource_type public.digital_resource_type,
+  _requested_amount integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  if not public.is_enrolled_in_course(_course_id, auth.uid()) then
+    raise exception 'Nu esti inrolat la acest curs.';
+  end if;
+
+  if _requested_amount is null or _requested_amount <= 0 then
+    raise exception 'Cantitate invalida.';
+  end if;
+
+  insert into public.course_resource_requests (course_id, student_id, resource_type, requested_amount)
+  values (_course_id, auth.uid(), _resource_type, _requested_amount);
+end;
+$$;
+
+-- Teacher/admin RPC: approve request and grant from professor bonus pool (10%)
+create or replace function public.approve_course_resource_request(_request_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_id bigint;
+  v_student_id uuid;
+  v_type public.digital_resource_type;
+  v_amount integer;
+  v_teacher_id uuid;
+  v_bonus_remaining integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  select r.course_id, r.student_id, r.resource_type, r.requested_amount
+  into v_course_id, v_student_id, v_type, v_amount
+  from public.course_resource_requests r
+  where r.id = _request_id
+    and r.status = 'pending';
+
+  if v_course_id is null then
+    raise exception 'Cerere inexistenta sau deja procesata.';
+  end if;
+
+  select c.teacher_id into v_teacher_id
+  from public.courses c
+  where c.id = v_course_id;
+
+  if not (public.is_admin(auth.uid()) or v_teacher_id = auth.uid()) then
+    raise exception 'Doar profesorul cursului sau admin poate aproba.';
+  end if;
+
+  select a.professor_bonus_remaining into v_bonus_remaining
+  from public.course_resource_allocations a
+  where a.course_id = v_course_id
+    and a.resource_type = v_type;
+
+  if v_bonus_remaining is null then
+    raise exception 'Nu exista alocare de resurse pentru acest tip.';
+  end if;
+
+  if v_bonus_remaining < v_amount then
+    raise exception 'Bonus insuficient pentru aprobare.';
+  end if;
+
+  update public.course_resource_allocations
+  set professor_bonus_remaining = professor_bonus_remaining - v_amount
+  where course_id = v_course_id
+    and resource_type = v_type;
+
+  insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
+  values (v_course_id, v_student_id, v_type, v_amount, 0)
+  on conflict (course_id, student_id, resource_type) do update
+  set granted_amount = public.course_student_resources.granted_amount + excluded.granted_amount;
+
+  update public.course_resource_requests
+  set status = 'approved',
+      decided_by = auth.uid(),
+      decided_at = now()
+  where id = _request_id;
+end;
+$$;
+
+-- Teacher/admin RPC: reject request
+create or replace function public.reject_course_resource_request(_request_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_course_id bigint;
+  v_teacher_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  select r.course_id into v_course_id
+  from public.course_resource_requests r
+  where r.id = _request_id
+    and r.status = 'pending';
+
+  if v_course_id is null then
+    raise exception 'Cerere inexistenta sau deja procesata.';
+  end if;
+
+  select c.teacher_id into v_teacher_id
+  from public.courses c
+  where c.id = v_course_id;
+
+  if not (public.is_admin(auth.uid()) or v_teacher_id = auth.uid()) then
+    raise exception 'Doar profesorul cursului sau admin poate respinge.';
+  end if;
+
+  update public.course_resource_requests
+  set status = 'rejected',
+      decided_by = auth.uid(),
+      decided_at = now()
+  where id = _request_id;
+end;
+$$;
+
+-- Student RPC: upload homework link (file_url)
+create or replace function public.submit_homework(
+  _course_id bigint,
+  _title text,
+  _file_url text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  if not public.is_enrolled_in_course(_course_id, auth.uid()) then
+    raise exception 'Nu esti inrolat la acest curs.';
+  end if;
+
+  if coalesce(trim(_title), '') = '' then
+    raise exception 'Titlu invalid.';
+  end if;
+
+  if coalesce(trim(_file_url), '') = '' then
+    raise exception 'URL invalid.';
+  end if;
+
+  insert into public.course_homework_submissions (course_id, student_id, title, file_url)
+  values (_course_id, auth.uid(), trim(_title), trim(_file_url));
+end;
+$$;
+
+-- Student RPC: simulate token usage (consumes from remaining)
+create or replace function public.simulate_token_usage(
+  _course_id bigint,
+  _tokens_used integer,
+  _note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_granted integer;
+  v_consumed integer;
+  v_remaining integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  if not public.is_enrolled_in_course(_course_id, auth.uid()) then
+    raise exception 'Nu esti inrolat la acest curs.';
+  end if;
+
+  if _tokens_used is null or _tokens_used <= 0 then
+    raise exception 'Cantitate invalida.';
+  end if;
+
+  select granted_amount, consumed_amount into v_granted, v_consumed
+  from public.course_student_resources
+  where course_id = _course_id
+    and student_id = auth.uid()
+    and resource_type = 'tokens';
+
+  v_granted := coalesce(v_granted, 0);
+  v_consumed := coalesce(v_consumed, 0);
+  v_remaining := greatest(v_granted - v_consumed, 0);
+
+  if v_remaining < _tokens_used then
+    raise exception 'Token-uri insuficiente.';
+  end if;
+
+  insert into public.course_token_activities (course_id, student_id, tokens_used, note)
+  values (_course_id, auth.uid(), _tokens_used, _note);
+
+  update public.course_student_resources
+  set consumed_amount = consumed_amount + _tokens_used
+  where course_id = _course_id
+    and student_id = auth.uid()
+    and resource_type = 'tokens';
+end;
+$$;
+
+-- Student RPC: simulate VPS validation (consumes 1 unit)
+create or replace function public.simulate_vps_validation(
+  _course_id bigint,
+  _note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_granted integer;
+  v_consumed integer;
+  v_remaining integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Trebuie sa fii autentificat.';
+  end if;
+
+  if not public.is_enrolled_in_course(_course_id, auth.uid()) then
+    raise exception 'Nu esti inrolat la acest curs.';
+  end if;
+
+  select granted_amount, consumed_amount into v_granted, v_consumed
+  from public.course_student_resources
+  where course_id = _course_id
+    and student_id = auth.uid()
+    and resource_type = 'vps_subscription';
+
+  v_granted := coalesce(v_granted, 0);
+  v_consumed := coalesce(v_consumed, 0);
+  v_remaining := greatest(v_granted - v_consumed, 0);
+
+  if v_remaining < 1 then
+    raise exception 'Abonamente VPS insuficiente.';
+  end if;
+
+  insert into public.course_vps_validations (course_id, student_id, is_valid, note)
+  values (_course_id, auth.uid(), true, _note);
+
+  update public.course_student_resources
+  set consumed_amount = consumed_amount + 1
+  where course_id = _course_id
+    and student_id = auth.uid()
+    and resource_type = 'vps_subscription';
+end;
+$$;
 
 -- Resources allocated by admin to a course.
 -- professor_bonus_amount is always 10% of required_amount (rounded up) at allocation time.
@@ -422,6 +828,9 @@ begin
   insert into public.course_enrollments (course_id, student_id)
   values (_course_id, auth.uid())
   on conflict (course_id, student_id) do nothing;
+
+  -- Auto-distribute baseline per-student resources on enrollment (if requirements exist).
+  perform public.apply_baseline_grants_for_student(_course_id, auth.uid());
 end;
 $$;
 
@@ -488,6 +897,112 @@ begin
       ),
       allocated_by = excluded.allocated_by,
       allocated_at = now();
+
+  -- Auto-distribute to currently enrolled students, based on per-student requirement.
+  perform public.distribute_course_resources_to_students(_course_id, _resource_type);
+end;
+$$;
+
+-- Baseline grants for a student based on professor requirements (per student).
+-- Called automatically on enrollment, and can be reused by other flows.
+create or replace function public.apply_baseline_grants_for_student(
+  _course_id bigint,
+  _student_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
+  select
+    r.course_id,
+    _student_id,
+    r.resource_type,
+    greatest(r.required_per_student, 0),
+    0
+  from public.course_resource_requirements r
+  where r.course_id = _course_id
+  on conflict (course_id, student_id, resource_type) do update
+  set granted_amount = excluded.granted_amount;
+end;
+$$;
+
+-- Backfill: ensure baseline grants exist for all current enrollments (idempotent).
+insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
+select
+  e.course_id,
+  e.student_id,
+  r.resource_type,
+  greatest(r.required_per_student, 0),
+  0
+from public.course_enrollments e
+join public.course_resource_requirements r on r.course_id = e.course_id
+on conflict (course_id, student_id, resource_type) do update
+set granted_amount = excluded.granted_amount;
+
+-- Admin RPC: distribute allocated resources to enrolled students based on professor requirements (per student).
+-- This sets/updates the baseline "granted_amount" for each enrolled student for a given course + resource_type.
+create or replace function public.distribute_course_resources_to_students(
+  _course_id bigint,
+  _resource_type public.digital_resource_type
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  per_student integer;
+  enrolled_count integer;
+  total_needed integer;
+  allocated integer;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Doar admin poate distribui resurse.';
+  end if;
+
+  select required_per_student into per_student
+  from public.course_resource_requirements
+  where course_id = _course_id
+    and resource_type = _resource_type;
+
+  if per_student is null then
+    raise exception 'Nu exista necesar setat de profesor pentru acest tip de resursa.';
+  end if;
+
+  select count(*) into enrolled_count
+  from public.course_enrollments
+  where course_id = _course_id;
+
+  total_needed := greatest(per_student, 0) * greatest(enrolled_count, 0);
+
+  select allocated_amount into allocated
+  from public.course_resource_allocations
+  where course_id = _course_id
+    and resource_type = _resource_type;
+
+  if allocated is null then
+    raise exception 'Nu exista alocare admin pentru acest tip de resursa.';
+  end if;
+
+  if allocated < total_needed then
+    raise exception 'Alocare insuficienta: necesar %, alocat %.', total_needed, allocated;
+  end if;
+
+  -- Upsert baseline grants for each enrolled student.
+  insert into public.course_student_resources (course_id, student_id, resource_type, granted_amount, consumed_amount)
+  select
+    e.course_id,
+    e.student_id,
+    _resource_type,
+    per_student,
+    0
+  from public.course_enrollments e
+  where e.course_id = _course_id
+  on conflict (course_id, student_id, resource_type) do update
+  set granted_amount = excluded.granted_amount;
 end;
 $$;
 
@@ -498,20 +1013,65 @@ $$;
 alter table public.courses enable row level security;
 alter table public.course_resource_requirements enable row level security;
 alter table public.course_enrollments enable row level security;
+alter table public.course_materials enable row level security;
+alter table public.course_student_resources enable row level security;
+alter table public.course_resource_requests enable row level security;
+alter table public.course_homework_submissions enable row level security;
+alter table public.course_token_activities enable row level security;
+alter table public.course_vps_validations enable row level security;
 alter table public.course_resource_allocations enable row level security;
 
 revoke all on public.courses from anon, authenticated;
 revoke all on public.course_resource_requirements from anon, authenticated;
 revoke all on public.course_enrollments from anon, authenticated;
+revoke all on public.course_materials from anon, authenticated;
+revoke all on public.course_student_resources from anon, authenticated;
+revoke all on public.course_resource_requests from anon, authenticated;
+revoke all on public.course_homework_submissions from anon, authenticated;
+revoke all on public.course_token_activities from anon, authenticated;
+revoke all on public.course_vps_validations from anon, authenticated;
 revoke all on public.course_resource_allocations from anon, authenticated;
 
 grant select, insert, update, delete on public.courses to authenticated;
 grant select, insert, update, delete on public.course_resource_requirements to authenticated;
 grant select on public.course_enrollments to authenticated;
+grant select on public.course_materials to authenticated;
+grant select on public.course_student_resources to authenticated;
+grant select, insert on public.course_resource_requests to authenticated;
+grant select, insert on public.course_homework_submissions to authenticated;
+grant select on public.course_token_activities to authenticated;
+grant select on public.course_vps_validations to authenticated;
 grant select on public.course_resource_allocations to authenticated;
 
 revoke all on function public.enroll_in_course(bigint) from public;
 grant execute on function public.enroll_in_course(bigint) to authenticated;
+
+revoke all on function public.apply_baseline_grants_for_student(bigint, uuid) from public;
+grant execute on function public.apply_baseline_grants_for_student(bigint, uuid) to authenticated;
+
+revoke all on function public.distribute_course_resources_to_students(bigint, public.digital_resource_type) from public;
+grant execute on function public.distribute_course_resources_to_students(bigint, public.digital_resource_type) to authenticated;
+
+revoke all on function public.is_enrolled_in_course(bigint, uuid) from public;
+grant execute on function public.is_enrolled_in_course(bigint, uuid) to authenticated;
+
+revoke all on function public.request_course_resources(bigint, public.digital_resource_type, integer) from public;
+grant execute on function public.request_course_resources(bigint, public.digital_resource_type, integer) to authenticated;
+
+revoke all on function public.approve_course_resource_request(bigint) from public;
+grant execute on function public.approve_course_resource_request(bigint) to authenticated;
+
+revoke all on function public.reject_course_resource_request(bigint) from public;
+grant execute on function public.reject_course_resource_request(bigint) to authenticated;
+
+revoke all on function public.submit_homework(bigint, text, text) from public;
+grant execute on function public.submit_homework(bigint, text, text) to authenticated;
+
+revoke all on function public.simulate_token_usage(bigint, integer, text) from public;
+grant execute on function public.simulate_token_usage(bigint, integer, text) to authenticated;
+
+revoke all on function public.simulate_vps_validation(bigint, text) from public;
+grant execute on function public.simulate_vps_validation(bigint, text) to authenticated;
 
 -- courses: visible to students (open enrollments + enrolled), teacher own, admin all
 drop policy if exists "courses_select_teacher_or_admin" on public.courses;
@@ -643,6 +1203,161 @@ using (
 drop policy if exists "course_enrollments_select_visible" on public.course_enrollments;
 create policy "course_enrollments_select_visible"
 on public.course_enrollments
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+);
+
+-- materials: enrolled students + course teacher/admin can read; teacher/admin can manage
+drop policy if exists "course_materials_select_enrolled" on public.course_materials;
+create policy "course_materials_select_enrolled"
+on public.course_materials
+for select
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+  or public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+drop policy if exists "course_materials_manage_teacher_admin" on public.course_materials;
+create policy "course_materials_manage_teacher_admin"
+on public.course_materials
+for all
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+)
+with check (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+-- student resources: student sees own; teacher/admin sees for their courses
+drop policy if exists "course_student_resources_select_visible" on public.course_student_resources;
+create policy "course_student_resources_select_visible"
+on public.course_student_resources
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+-- resource requests: student manages own inserts/select; teacher/admin selects; teacher/admin can update (approve/reject via RPC)
+drop policy if exists "course_resource_requests_select_visible" on public.course_resource_requests;
+create policy "course_resource_requests_select_visible"
+on public.course_resource_requests
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+drop policy if exists "course_resource_requests_insert_student" on public.course_resource_requests;
+create policy "course_resource_requests_insert_student"
+on public.course_resource_requests
+for insert
+to authenticated
+with check (
+  student_id = auth.uid()
+  and public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+drop policy if exists "course_resource_requests_update_teacher_admin" on public.course_resource_requests;
+create policy "course_resource_requests_update_teacher_admin"
+on public.course_resource_requests
+for update
+to authenticated
+using (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+)
+with check (
+  public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+-- homework: student sees/creates own; teacher/admin sees for their courses
+drop policy if exists "course_homework_select_visible" on public.course_homework_submissions;
+create policy "course_homework_select_visible"
+on public.course_homework_submissions
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+drop policy if exists "course_homework_insert_student" on public.course_homework_submissions;
+create policy "course_homework_insert_student"
+on public.course_homework_submissions
+for insert
+to authenticated
+with check (
+  student_id = auth.uid()
+  and public.is_enrolled_in_course(course_id, auth.uid())
+);
+
+-- token activities: student sees own; teacher/admin sees for their courses
+drop policy if exists "course_token_activities_select_visible" on public.course_token_activities;
+create policy "course_token_activities_select_visible"
+on public.course_token_activities
+for select
+to authenticated
+using (
+  student_id = auth.uid()
+  or public.is_admin(auth.uid())
+  or exists (
+    select 1 from public.courses c
+    where c.id = course_id
+      and c.teacher_id = auth.uid()
+  )
+);
+
+-- vps validations: student sees own; teacher/admin sees for their courses
+drop policy if exists "course_vps_validations_select_visible" on public.course_vps_validations;
+create policy "course_vps_validations_select_visible"
+on public.course_vps_validations
 for select
 to authenticated
 using (
