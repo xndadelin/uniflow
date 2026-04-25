@@ -4,13 +4,13 @@ import { useMutation } from "@tanstack/react-query";
 import { GitBranch, Zap } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 
 export default function LoginPage() {
   const supabase = useMemo(() => createClient(), []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
 
   const loginMutation = useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
@@ -24,11 +24,11 @@ export default function LoginPage() {
       }
     },
     onSuccess: () => {
-      setMessage("Login reușit. Redirecționez...");
+      toast.success("Logare reusita. Te redirectionez...");
       window.location.href = "/";
     },
     onError: (error: Error) => {
-      setMessage(error.message);
+      toast.error(error.message);
     },
   });
 
@@ -51,13 +51,12 @@ export default function LoginPage() {
       }
     },
     onError: (error: Error) => {
-      setMessage(error.message);
+      toast.error(error.message);
     },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage(null);
     loginMutation.mutate({ email, password });
   };
 
@@ -69,7 +68,7 @@ export default function LoginPage() {
         <header className="mb-6 pb-2">
           <h1 className="font-mono text-2xl font-semibold tracking-widest">LOGIN</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Alege metoda de autentificare: GitHub OAuth sau email + parolă.
+            Alege metoda de autentificare: GitHub OAuth sau email + parola.
           </p>
         </header>
 
@@ -80,20 +79,19 @@ export default function LoginPage() {
             </p>
             <h2 className="font-mono text-xl font-semibold">GitHub Access</h2>
             <p className="text-sm text-muted-foreground">
-              Login rapid prin contul tău GitHub.
+              Logare rapida cu contul tau GitHub.
             </p>
 
             <button
               type="button"
               disabled={isPending}
               onClick={() => {
-                setMessage(null);
                 githubMutation.mutate();
               }}
               className="inline-flex w-full items-center justify-center gap-2 bg-foreground px-4 py-2 text-sm font-semibold uppercase tracking-wide text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <GitBranch className="h-4 w-4" />
-              {githubMutation.isPending ? "Redirecting..." : "Continue with GitHub"}
+              {githubMutation.isPending ? "Redirectionare..." : "Intra cu GitHub"}
             </button>
           </div>
 
@@ -121,7 +119,7 @@ export default function LoginPage() {
               </label>
 
               <label className="block text-sm">
-                <span className="mb-1 block text-muted-foreground">Parolă</span>
+                <span className="mb-1 block text-muted-foreground">Parola</span>
                 <input
                   type="password"
                   value={password}
@@ -138,22 +136,23 @@ export default function LoginPage() {
                 disabled={isPending}
                 className="w-full bg-primary px-3 py-2 text-sm font-semibold uppercase tracking-wide text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loginMutation.isPending ? "Signing in..." : "Login with Email"}
+                {loginMutation.isPending ? "Se autentifica..." : "Intra cu email"}
               </button>
+
+              <Link
+                href="/forgot-password"
+                className="inline-block text-xs text-muted-foreground underline underline-offset-4 transition hover:text-foreground"
+              >
+                Ai uitat parola?
+              </Link>
             </form>
           </div>
         </div>
 
-        {message ? (
-          <p className="mt-5 bg-card/70 px-3 py-2 text-sm text-foreground">
-            {message}
-          </p>
-        ) : null}
-
         <p className="mt-6 text-sm text-muted-foreground">
           Nu ai cont?{" "}
           <Link href="/register" className="font-semibold text-foreground underline underline-offset-4">
-            Înregistrează-te
+            Inregistreaza-te
           </Link>
         </p>
       </section>

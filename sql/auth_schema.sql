@@ -151,7 +151,7 @@ revoke all on public.user_roles from anon, authenticated;
 -- Minimal table grants for authenticated users
 grant select on public.roles to authenticated;
 grant select, update on public.app_users to authenticated;
-grant select on public.user_roles to authenticated;
+grant select, insert, update, delete on public.user_roles to authenticated;
 
 -- ----- roles policies -----
 drop policy if exists "roles_select_authenticated" on public.roles;
@@ -236,3 +236,56 @@ on public.user_roles
 for delete
 to authenticated
 using (public.is_admin(auth.uid()));
+
+-- Protect system from accidental lockout: never remove the last admin role
+create or replace function public.prevent_last_admin_role_removal()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  admin_role_id bigint;
+  admin_count bigint;
+begin
+  select id into admin_role_id
+  from public.roles
+  where name = 'admin'
+  limit 1;
+
+  if admin_role_id is null then
+    return coalesce(new, old);
+  end if;
+
+  if tg_op = 'DELETE' and old.role_id = admin_role_id then
+    select count(*) into admin_count
+    from public.user_roles
+    where role_id = admin_role_id;
+
+    if admin_count <= 1 then
+      raise exception 'Nu poti revoca ultimul rol admin activ.';
+    end if;
+  end if;
+
+  if tg_op = 'UPDATE' and old.role_id = admin_role_id and new.role_id <> admin_role_id then
+    select count(*) into admin_count
+    from public.user_roles
+    where role_id = admin_role_id;
+
+    if admin_count <= 1 then
+      raise exception 'Nu poti modifica ultimul rol admin activ.';
+    end if;
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists user_roles_protect_last_admin_delete on public.user_roles;
+create trigger user_roles_protect_last_admin_delete
+before delete on public.user_roles
+for each row execute function public.prevent_last_admin_role_removal();
+
+drop trigger if exists user_roles_protect_last_admin_update on public.user_roles;
+create trigger user_roles_protect_last_admin_update
+before update on public.user_roles
+for each row execute function public.prevent_last_admin_role_removal();

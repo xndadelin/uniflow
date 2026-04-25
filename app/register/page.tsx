@@ -4,36 +4,42 @@ import { useMutation } from "@tanstack/react-query";
 import { GitBranch, Zap } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 
 export default function RegisterPage() {
   const supabase = useMemo(() => createClient(), []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
 
   const registerMutation = useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
-      const origin = window.location.origin;
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-          emailRedirectTo: `${origin}/auth/callback`,
-        },
       });
 
       if (error) {
         throw error;
       }
+
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (signInError) {
+        throw new Error(
+          "Contul a fost creat, dar autentificarea automata a esuat. Dezactiveaza Confirm email in Supabase sau configureaza SMTP.",
+        );
+      }
     },
     onSuccess: () => {
-      setMessage(
-        "Cont creat. Verifică email-ul pentru confirmare, apoi te poți loga.",
-      );
+      toast.success("Cont creat cu succes. Te redirectionez...");
+      window.location.href = "/";
     },
     onError: (error: Error) => {
-      setMessage(error.message);
+      toast.error(error.message);
     },
   });
 
@@ -56,13 +62,12 @@ export default function RegisterPage() {
       }
     },
     onError: (error: Error) => {
-      setMessage(error.message);
+      toast.error(error.message);
     },
   });
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage(null);
     registerMutation.mutate({ email, password });
   };
 
@@ -74,7 +79,7 @@ export default function RegisterPage() {
         <header className="mb-6 pb-2">
           <h1 className="font-mono text-2xl font-semibold tracking-widest">REGISTER</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Creează cont nou prin email sau intră direct cu GitHub.
+            Creeaza cont nou prin email sau intra direct cu GitHub.
           </p>
         </header>
 
@@ -85,20 +90,19 @@ export default function RegisterPage() {
             </p>
             <h2 className="font-mono text-xl font-semibold">GitHub Access</h2>
             <p className="text-sm text-muted-foreground">
-              Creezi cont/autentificare instant din GitHub.
+              Creezi cont sau te autentifici instant din GitHub.
             </p>
 
             <button
               type="button"
               disabled={isPending}
               onClick={() => {
-                setMessage(null);
                 githubMutation.mutate();
               }}
               className="inline-flex w-full items-center justify-center gap-2 bg-foreground px-4 py-2 text-sm font-semibold uppercase tracking-wide text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <GitBranch className="h-4 w-4" />
-              {githubMutation.isPending ? "Redirecting..." : "Register with GitHub"}
+              {githubMutation.isPending ? "Redirectionare..." : "Intra cu GitHub"}
             </button>
           </div>
 
@@ -126,7 +130,7 @@ export default function RegisterPage() {
               </label>
 
               <label className="block text-sm">
-                <span className="mb-1 block text-muted-foreground">Parolă</span>
+                <span className="mb-1 block text-muted-foreground">Parola</span>
                 <input
                   type="password"
                   value={password}
@@ -143,22 +147,16 @@ export default function RegisterPage() {
                 disabled={isPending}
                 className="w-full bg-primary px-3 py-2 text-sm font-semibold uppercase tracking-wide text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {registerMutation.isPending ? "Creating account..." : "Register with Email"}
+                {registerMutation.isPending ? "Se creeaza contul..." : "Creeaza cont"}
               </button>
             </form>
           </div>
         </div>
 
-        {message ? (
-          <p className="mt-5 bg-card/70 px-3 py-2 text-sm text-foreground">
-            {message}
-          </p>
-        ) : null}
-
         <p className="mt-6 text-sm text-muted-foreground">
           Ai deja cont?{" "}
           <Link href="/login" className="font-semibold text-foreground underline underline-offset-4">
-            Login
+            Logare
           </Link>
         </p>
       </section>
