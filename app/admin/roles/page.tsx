@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Pagination } from "@/components/Pagination";
 
 type AppUser = {
   id: string;
@@ -28,7 +29,8 @@ type UserRole = {
 export default function AdminRolesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [selectedRoleByUser, setSelectedRoleByUser] = useState<Record<string, number>>({});
-  const [usersLimit, setUsersLimit] = useState<number>(10);
+  const [usersPage, setUsersPage] = useState<number>(1);
+  const [usersPageSize, setUsersPageSize] = useState<number>(10);
 
   const adminCheckQuery = useQuery({
     queryKey: ["admin-check"],
@@ -52,15 +54,17 @@ export default function AdminRolesPage() {
   });
 
   const rolesDataQuery = useQuery({
-    queryKey: ["admin-roles-data", { usersLimit }],
+    queryKey: ["admin-roles-data", { usersPage, usersPageSize }],
     enabled: adminCheckQuery.data?.isAdmin === true,
     queryFn: async () => {
+      const from = (usersPage - 1) * usersPageSize;
+      const to = from + usersPageSize - 1;
       const [usersRes, rolesRes, userRolesRes] = await Promise.all([
         supabase
           .from("app_users")
-          .select("id,email,full_name,created_at")
+          .select("id,email,full_name,created_at", { count: "exact" })
           .order("created_at", { ascending: false })
-          .range(0, Math.max(usersLimit - 1, 0)),
+          .range(from, to),
         supabase.from("roles").select("id,name,description").order("name", { ascending: true }),
         supabase.from("user_roles").select("user_id,role_id"),
       ]);
@@ -71,6 +75,7 @@ export default function AdminRolesPage() {
 
       return {
         users: (usersRes.data ?? []) as AppUser[],
+        usersCount: usersRes.count ?? 0,
         roles: (rolesRes.data ?? []) as Role[],
         userRoles: (userRolesRes.data ?? []) as UserRole[],
       };
@@ -153,6 +158,7 @@ export default function AdminRolesPage() {
   }
 
   const users = rolesDataQuery.data?.users ?? [];
+  const usersCount = rolesDataQuery.data?.usersCount ?? 0;
   const roles = rolesDataQuery.data?.roles ?? [];
   const userRoles = rolesDataQuery.data?.userRoles ?? [];
 
@@ -176,17 +182,18 @@ export default function AdminRolesPage() {
           <p className="text-sm text-muted-foreground">Se incarca utilizatorii...</p>
         ) : (
           <>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-xs text-muted-foreground">
-                Afisez <span className="font-mono text-foreground">{users.length}</span> (max {usersLimit}).
-              </p>
-              <button
-                type="button"
-                onClick={() => setUsersLimit((prev) => prev + 10)}
-                className="inline-flex items-center justify-center bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-              >
-                Incarca inca 10
-              </button>
+            <div className="mb-4">
+              <Pagination
+                variant="compact"
+                page={usersPage}
+                pageSize={usersPageSize}
+                totalItems={usersCount}
+                onPageChange={(p) => setUsersPage(p)}
+                onPageSizeChange={(s) => {
+                  setUsersPageSize(s);
+                  setUsersPage(1);
+                }}
+              />
             </div>
 
             <Table>
@@ -214,7 +221,9 @@ export default function AdminRolesPage() {
 
                     return (
                       <TableRow key={user.id}>
-                        <TableCell className="text-center font-mono text-xs text-muted-foreground">{idx + 1}</TableCell>
+                        <TableCell className="text-center font-mono text-xs text-muted-foreground">
+                          {(usersPage - 1) * usersPageSize + idx + 1}
+                        </TableCell>
 
                         <TableCell className="min-w-[180px]">
                           <div className="space-y-0.5">

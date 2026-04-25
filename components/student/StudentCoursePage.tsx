@@ -5,6 +5,14 @@ import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Pagination } from "@/components/Pagination";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type CourseRow = {
   id: number;
@@ -86,6 +94,11 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
   const [homeworkUrl, setHomeworkUrl] = useState<string>("");
   const [selectedActivityId, setSelectedActivityId] = useState<string>("");
   const [activityNote, setActivityNote] = useState<string>("");
+  const [materialsSearch, setMaterialsSearch] = useState<string>("");
+  const [materialsPage, setMaterialsPage] = useState<number>(1);
+  const [homeworkSearch, setHomeworkSearch] = useState<string>("");
+  const [homeworkPage, setHomeworkPage] = useState<number>(1);
+  const pageSize = 10;
 
   const enrollmentQuery = useQuery({
     queryKey: ["course-enrollment", courseId],
@@ -270,7 +283,7 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
 
   if (enrollmentQuery.isLoading) {
     return (
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
         <section className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">Se incarca...</section>
       </main>
     );
@@ -278,7 +291,7 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
 
   if (enrollmentQuery.isError) {
     return (
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
         <section className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-sm text-destructive">
           Eroare: <span className="font-mono text-xs">{getErrorMessage(enrollmentQuery.error)}</span>
         </section>
@@ -288,11 +301,14 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
 
   if (!enrollmentQuery.data?.isEnrolled) {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-10">
+      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
         <section className="rounded-lg border border-border bg-card p-6">
-          <h1 className="font-mono text-xl font-semibold text-foreground">Acces restrictionat</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Acces restricționat</h1>
           <p className="mt-2 text-sm text-muted-foreground">Pagina cursului este disponibila doar studentilor inrolati.</p>
-          <Link href="/" className="mt-4 inline-flex bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground">
+          <Link
+            href="/"
+            className="mt-5 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs transition hover:opacity-95"
+          >
             Inapoi la cursuri
           </Link>
         </section>
@@ -310,301 +326,365 @@ export function StudentCoursePage({ courseId }: { courseId: number }) {
   const remainingTokens = Math.max(0, (tokens?.granted_amount ?? 0) - (tokens?.consumed_amount ?? 0));
   const remainingVps = Math.max(0, (vps?.granted_amount ?? 0) - (vps?.consumed_amount ?? 0));
 
+  const filteredMaterials = useMemo(() => {
+    const q = materialsSearch.trim().toLowerCase();
+    if (!q) return materials;
+    return materials.filter((m) => {
+      const hay = `${m.title ?? ""} ${m.description ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [materials, materialsSearch]);
+
+  const materialsTotal = filteredMaterials.length;
+  const materialsPaged = filteredMaterials.slice((materialsPage - 1) * pageSize, materialsPage * pageSize);
+
+  const homeworkAll = homeworkQuery.data ?? [];
+  const filteredHomework = useMemo(() => {
+    const q = homeworkSearch.trim().toLowerCase();
+    if (!q) return homeworkAll;
+    return homeworkAll.filter((h) => (h.title ?? "").toLowerCase().includes(q));
+  }, [homeworkAll, homeworkSearch]);
+  const homeworkTotal = filteredHomework.length;
+  const homeworkPaged = filteredHomework.slice((homeworkPage - 1) * pageSize, homeworkPage * pageSize);
+
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
-      <header className="mb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Curs</p>
-        <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">{course?.title ?? `#${courseId}`}</h1>
-        {course?.description ? <p className="mt-1 text-sm text-muted-foreground">{course.description}</p> : null}
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
+      <header className="mb-8">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Curs</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">{course?.title ?? `#${courseId}`}</h1>
+        {course?.description ? <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{course.description}</p> : null}
       </header>
 
-      <section className="rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Resurse digitale disponibile (ramase)</h2>
-        {resourcesQuery.isLoading ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : resourcesQuery.isError ? (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare: <span className="font-mono text-xs">{getErrorMessage(resourcesQuery.error)}</span>
-          </div>
-        ) : (
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="rounded-md border border-border/70 bg-muted/10 p-4">
-              <div className="text-xs text-muted-foreground">{formatResourceLabel("tokens")}</div>
-              <div className="mt-1 font-mono text-2xl font-semibold text-foreground">{remainingTokens}</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                total primit: {tokens?.granted_amount ?? 0} · consumat: {tokens?.consumed_amount ?? 0}
-              </div>
+      <div className="space-y-10">
+        {/* Overview */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold tracking-tight">Overview</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="border-border/70 bg-muted/20 shadow-2xs">
+                <CardHeader className="pb-2 pt-4">
+                  <CardTitle className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                    {formatResourceLabel("tokens")}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="text-3xl font-semibold tracking-tight tabular-nums">{remainingTokens}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    total primit: {tokens?.granted_amount ?? 0} · consumat: {tokens?.consumed_amount ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card className="border-border/70 bg-muted/20 shadow-2xs">
+                <CardHeader className="pb-2 pt-4">
+                  <CardTitle className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                    {formatResourceLabel("vps_subscription")}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="text-3xl font-semibold tracking-tight tabular-nums">{remainingVps}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    total primit: {vps?.granted_amount ?? 0} · consumat: {vps?.consumed_amount ?? 0}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-            <div className="rounded-md border border-border/70 bg-muted/10 p-4">
-              <div className="text-xs text-muted-foreground">{formatResourceLabel("vps_subscription")}</div>
-              <div className="mt-1 font-mono text-2xl font-semibold text-foreground">{remainingVps}</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                total primit: {vps?.granted_amount ?? 0} · consumat: {vps?.consumed_amount ?? 0}
+
+            {(resourcesQuery.isError || resourcesQuery.isLoading) ? (
+              <div className="mt-3 text-sm text-muted-foreground">
+                {resourcesQuery.isLoading ? "Se incarca..." : `Eroare: ${getErrorMessage(resourcesQuery.error)}`}
               </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">VPS (credențiale)</h2>
-        {vpsCredentialsQuery.isLoading ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : vpsCredentialsQuery.isError ? (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare: <span className="font-mono text-xs">{getErrorMessage(vpsCredentialsQuery.error)}</span>
-          </div>
-        ) : !vpsCredentialsQuery.data ? (
-          <div className="mt-3 rounded-md border border-border/70 bg-muted/10 p-4 text-sm text-muted-foreground">
-            Nu exista credențiale VPS alocate inca pentru tine.
-          </div>
-        ) : (
-          <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-            <div className="rounded-md border border-border/70 bg-muted/10 p-4">
-              <div className="text-xs text-muted-foreground">Host/IP</div>
-              <div className="mt-1 font-mono text-sm text-foreground">{vpsCredentialsQuery.data.host ?? "—"}</div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">User</div>
-                  <div className="mt-1 font-mono text-sm text-foreground">{vpsCredentialsQuery.data.username}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Parola</div>
-                  <div className="mt-1 font-mono text-sm text-foreground">{vpsCredentialsQuery.data.password}</div>
-                </div>
-              </div>
-              <div className="mt-2 text-[11px] text-muted-foreground">
-                Validarea utilizarii abonamentelor se face doar din link-ul primit pe email.
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Incarca tema</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Trimite un link catre tema (ex: Google Drive / GitHub / PDF public).</p>
-
-        <div className="mt-3 grid gap-2 md:grid-cols-3 md:items-end">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Titlu</label>
-            <input
-              value={homeworkTitle}
-              onChange={(e) => setHomeworkTitle(e.target.value)}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-              placeholder="Tema 1"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label className="text-xs font-medium text-muted-foreground">URL</label>
-            <input
-              value={homeworkUrl}
-              onChange={(e) => setHomeworkUrl(e.target.value)}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-              placeholder="https://..."
-            />
-          </div>
-          <div className="md:col-span-3 flex justify-end">
-            <button
-              type="button"
-              disabled={submitHomeworkMutation.isPending}
-              onClick={() => submitHomeworkMutation.mutate()}
-              className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-            >
-              Incarca tema
-            </button>
-          </div>
-        </div>
-
-        {homeworkQuery.isLoading ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : homeworkQuery.isError ? (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare: <span className="font-mono text-xs">{getErrorMessage(homeworkQuery.error)}</span>
-          </div>
-        ) : (homeworkQuery.data ?? []).length === 0 ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu ai teme incarcate inca.</div>
-        ) : (
-          <div className="mt-4 space-y-2">
-            {(homeworkQuery.data ?? []).slice(0, 10).map((h) => (
-              <a
-                key={h.id}
-                href={h.file_url}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-md border border-border/70 bg-muted/10 p-4 transition hover:bg-muted/20"
-              >
-                <div className="text-sm font-medium text-foreground">{h.title}</div>
-                <div className="mt-2 text-[11px] text-muted-foreground">{new Date(h.submitted_at).toLocaleString()}</div>
-              </a>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Consum token-uri prin activitati</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Selectezi o activitate, iar sistemul consuma automat <span className="font-mono">token_cost</span>.
-        </p>
-
-        <div className="mt-3 grid gap-2 sm:grid-cols-[320px_1fr_auto] sm:items-end">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Activitate</label>
-            <select
-              value={selectedActivityId}
-              onChange={(e) => setSelectedActivityId(e.target.value)}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-            >
-              <option value="">— alege —</option>
-              {(activitiesQuery.data ?? []).map((a) => (
-                <option key={a.id} value={String(a.id)}>
-                  {a.title} (cost: {a.token_cost})
-                </option>
-              ))}
-            </select>
-            {activitiesQuery.isError ? (
-              <div className="mt-1 text-[11px] text-destructive">{getErrorMessage(activitiesQuery.error)}</div>
             ) : null}
+          </CardContent>
+        </Card>
+
+        {/* Main actions + info (two columns on desktop) */}
+        <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
+          <div className="space-y-8">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold tracking-tight">Consum token-uri</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">
+                  Selectezi o activitate, iar sistemul consuma automat <span className="font-mono">token_cost</span>.
+                </p>
+
+                <div className="mt-4 grid gap-3">
+                  <div className="space-y-1">
+                    <Label>Activitate</Label>
+                    <Select value={selectedActivityId} onValueChange={setSelectedActivityId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="— alege —" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(activitiesQuery.data ?? []).map((a) => (
+                          <SelectItem key={a.id} value={String(a.id)}>
+                            {a.title} (cost: {a.token_cost})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {activitiesQuery.isError ? <div className="text-[11px] text-destructive">{getErrorMessage(activitiesQuery.error)}</div> : null}
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="act-note">Nota (optional)</Label>
+                    <Input
+                      id="act-note"
+                      value={activityNote}
+                      onChange={(e) => setActivityNote(e.target.value)}
+                      placeholder="Ex: 10 generari imagine"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={() => consumeActivityTokensMutation.mutate()} disabled={consumeActivityTokensMutation.isPending}>
+                      Consuma automat
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  {tokenActivitiesQuery.isLoading ? (
+                    <div className="text-sm text-muted-foreground">Se incarca...</div>
+                  ) : tokenActivitiesQuery.isError ? (
+                    <div className="text-sm text-destructive">Eroare: {getErrorMessage(tokenActivitiesQuery.error)}</div>
+                  ) : (tokenActivitiesQuery.data ?? []).length === 0 ? (
+                    <div className="text-sm text-muted-foreground">Nu exista activitati inca.</div>
+                  ) : (
+                    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 text-sm divide-y divide-border/30">
+                      {(tokenActivitiesQuery.data ?? []).slice(0, 8).map((a) => (
+                        <div key={a.id} className="px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-mono text-xs text-muted-foreground">#{a.id}</div>
+                            <div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}</div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary">tokens: {a.tokens_used}</Badge>
+                            {a.note ? <Badge variant="outline">nota: {a.note}</Badge> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold tracking-tight">Cereri resurse</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-[220px_160px_auto] sm:items-end">
+                  <div className="space-y-1">
+                    <Label>Tip resursa</Label>
+                    <Select value={requestType} onValueChange={(v) => setRequestType(v as StudentResourceRow["resource_type"])}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tokens">tokens</SelectItem>
+                        <SelectItem value="vps_subscription">vps_subscription</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="req-amt">Cantitate</Label>
+                    <Input id="req-amt" value={requestAmount} onChange={(e) => setRequestAmount(e.target.value)} type="number" min={1} />
+                  </div>
+                  <div className="flex sm:justify-end">
+                    <Button onClick={() => createRequestMutation.mutate()} disabled={createRequestMutation.isPending}>
+                      Cere resurse
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  {requestsQuery.isLoading ? (
+                    <div className="text-sm text-muted-foreground">Se incarca...</div>
+                  ) : requestsQuery.isError ? (
+                    <div className="text-sm text-destructive">Eroare: {getErrorMessage(requestsQuery.error)}</div>
+                  ) : (requestsQuery.data ?? []).length === 0 ? (
+                    <div className="text-sm text-muted-foreground">Nu ai cereri inca.</div>
+                  ) : (
+                    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 text-sm divide-y divide-border/30">
+                      {(requestsQuery.data ?? []).slice(0, 10).map((r) => (
+                        <div key={r.id} className="px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-mono text-xs text-muted-foreground">#{r.id}</div>
+                            <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary">{r.resource_type}</Badge>
+                            <Badge variant="outline">cantitate: {r.requested_amount}</Badge>
+                            <Badge variant="outline">status: {r.status}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Nota (optional)</label>
-            <input
-              value={activityNote}
-              onChange={(e) => setActivityNote(e.target.value)}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-              placeholder="Ex: 10 generari imagine"
-            />
+
+          <div className="space-y-8">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold tracking-tight">Tema</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">Trimite un link catre tema (Drive/GitHub/PDF public).</p>
+                <div className="mt-4 grid gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="hw-title">Titlu</Label>
+                    <Input id="hw-title" value={homeworkTitle} onChange={(e) => setHomeworkTitle(e.target.value)} placeholder="Tema 1" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="hw-url">URL</Label>
+                    <Input id="hw-url" value={homeworkUrl} onChange={(e) => setHomeworkUrl(e.target.value)} placeholder="https://..." />
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={() => submitHomeworkMutation.mutate()} disabled={submitHomeworkMutation.isPending}>
+                      Incarca tema
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-6">
+                  {homeworkQuery.isLoading ? (
+                    <div className="text-sm text-muted-foreground">Se incarca...</div>
+                  ) : homeworkQuery.isError ? (
+                    <div className="text-sm text-destructive">Eroare: {getErrorMessage(homeworkQuery.error)}</div>
+                  ) : homeworkTotal === 0 ? (
+                    <div className="text-sm text-muted-foreground">Nu ai teme incarcate inca.</div>
+                  ) : (
+                    <>
+                      <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <div className="space-y-1">
+                          <Label htmlFor="hw-search">Cauta</Label>
+                          <Input
+                            id="hw-search"
+                            value={homeworkSearch}
+                            onChange={(e) => {
+                              setHomeworkSearch(e.target.value);
+                              setHomeworkPage(1);
+                            }}
+                            placeholder="Titlu tema..."
+                          />
+                        </div>
+                        <div className="sm:pb-[2px]">
+                          <Pagination variant="compact" page={homeworkPage} pageSize={pageSize} totalItems={homeworkTotal} onPageChange={setHomeworkPage} />
+                        </div>
+                      </div>
+
+                      <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 divide-y divide-border/30">
+                        {homeworkPaged.map((h) => (
+                          <div key={h.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium">{h.title}</div>
+                              <div className="mt-2 text-[11px] text-muted-foreground">{new Date(h.submitted_at).toLocaleString()}</div>
+                            </div>
+                            <Button asChild size="sm" variant="outline">
+                              <a href={h.file_url} target="_blank" rel="noreferrer">
+                                Deschide
+                              </a>
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold tracking-tight">Materiale</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {materialsQuery.isLoading ? (
+                  <div className="text-sm text-muted-foreground">Se incarca...</div>
+                ) : materialsQuery.isError ? (
+                  <div className="text-sm text-destructive">Eroare: {getErrorMessage(materialsQuery.error)}</div>
+                ) : materialsTotal === 0 ? (
+                  <div className="text-sm text-muted-foreground">Nu exista materiale incarcate inca.</div>
+                ) : (
+                  <>
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <div className="space-y-1">
+                        <Label htmlFor="mat-search">Cauta</Label>
+                        <Input
+                          id="mat-search"
+                          value={materialsSearch}
+                          onChange={(e) => {
+                            setMaterialsSearch(e.target.value);
+                            setMaterialsPage(1);
+                          }}
+                          placeholder="Titlu / descriere..."
+                        />
+                      </div>
+                      <div className="sm:pb-[2px]">
+                        <Pagination variant="compact" page={materialsPage} pageSize={pageSize} totalItems={materialsTotal} onPageChange={setMaterialsPage} />
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-md border border-border/60 bg-muted/15 divide-y divide-border/30">
+                      {materialsPaged.map((m) => (
+                        <div key={m.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{m.title}</div>
+                            {m.description ? <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{m.description}</div> : null}
+                            <div className="mt-2 text-[11px] text-muted-foreground">{new Date(m.created_at).toLocaleString()}</div>
+                          </div>
+                          <Button asChild size="sm" variant="outline">
+                            <a href={m.url} target="_blank" rel="noreferrer">
+                              Deschide
+                            </a>
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold tracking-tight">VPS</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {vpsCredentialsQuery.isLoading ? (
+                  <div className="text-sm text-muted-foreground">Se incarca...</div>
+                ) : vpsCredentialsQuery.isError ? (
+                  <div className="text-sm text-destructive">Eroare: {getErrorMessage(vpsCredentialsQuery.error)}</div>
+                ) : !vpsCredentialsQuery.data ? (
+                  <div className="text-sm text-muted-foreground">Nu exista credențiale VPS alocate inca pentru tine.</div>
+                ) : (
+                  <div className="rounded-md border border-border/60 bg-muted/15 p-4">
+                    <div className="text-xs text-muted-foreground">Host/IP</div>
+                    <div className="mt-1 font-mono text-sm">{vpsCredentialsQuery.data.host ?? "—"}</div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <div className="text-xs text-muted-foreground">User</div>
+                        <div className="mt-1 font-mono text-sm">{vpsCredentialsQuery.data.username}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Parola</div>
+                        <div className="mt-1 font-mono text-sm">{vpsCredentialsQuery.data.password}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-[11px] text-muted-foreground">Validarea utilizarii abonamentelor se face doar din link-ul primit pe email.</div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
-          <button
-            type="button"
-            disabled={consumeActivityTokensMutation.isPending}
-            onClick={() => consumeActivityTokensMutation.mutate()}
-            className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-          >
-            Consuma automat
-          </button>
         </div>
-
-        {tokenActivitiesQuery.isLoading ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : tokenActivitiesQuery.isError ? (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare: <span className="font-mono text-xs">{getErrorMessage(tokenActivitiesQuery.error)}</span>
-          </div>
-        ) : (tokenActivitiesQuery.data ?? []).length === 0 ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista activitati inca.</div>
-        ) : (
-          <div className="mt-4 space-y-2 text-sm">
-            {(tokenActivitiesQuery.data ?? []).slice(0, 10).map((a) => (
-              <div key={a.id} className="rounded-md border border-border/70 bg-muted/10 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-mono text-xs text-muted-foreground">#{a.id}</div>
-                  <div className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}</div>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">tokens: {a.tokens_used}</span>
-                  {a.note ? <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">nota: {a.note}</span> : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Cereri resurse suplimentare</h2>
-        <div className="mt-3 grid gap-2 sm:grid-cols-[220px_160px_auto] sm:items-end">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Tip resursa</label>
-            <select
-              value={requestType}
-              onChange={(e) => setRequestType(e.target.value as StudentResourceRow["resource_type"])}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-            >
-              <option value="tokens">tokens</option>
-              <option value="vps_subscription">vps_subscription</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Cantitate</label>
-            <input
-              value={requestAmount}
-              onChange={(e) => setRequestAmount(e.target.value)}
-              type="number"
-              min={1}
-              className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-            />
-          </div>
-          <button
-            type="button"
-            disabled={createRequestMutation.isPending}
-            onClick={() => createRequestMutation.mutate()}
-            className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-          >
-            Cere resurse
-          </button>
-        </div>
-
-        {requestsQuery.isLoading ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : requestsQuery.isError ? (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare: <span className="font-mono text-xs">{getErrorMessage(requestsQuery.error)}</span>
-          </div>
-        ) : (requestsQuery.data ?? []).length === 0 ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-            Nu ai cereri inca.
-          </div>
-        ) : (
-          <div className="mt-4 space-y-2 text-sm">
-            {(requestsQuery.data ?? []).map((r) => (
-              <div key={r.id} className="rounded-md border border-border/70 bg-muted/10 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-mono text-xs text-muted-foreground">#{r.id}</div>
-                  <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">{r.resource_type}</span>
-                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">cantitate: {r.requested_amount}</span>
-                  <span className="rounded-md bg-muted/30 px-2 py-1 text-xs text-foreground">status: {r.status}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Materiale incarcate de profesor</h2>
-        {materialsQuery.isLoading ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : materialsQuery.isError ? (
-          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            Eroare: <span className="font-mono text-xs">{getErrorMessage(materialsQuery.error)}</span>
-          </div>
-        ) : materials.length === 0 ? (
-          <div className="mt-3 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-            Nu exista materiale incarcate inca.
-          </div>
-        ) : (
-          <div className="mt-4 space-y-2">
-            {materials.map((m) => (
-              <a
-                key={m.id}
-                href={m.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block rounded-md border border-border/70 bg-muted/10 p-4 transition hover:bg-muted/20"
-              >
-                <div className="text-sm font-medium text-foreground">{m.title}</div>
-                {m.description ? <div className="mt-1 text-xs text-muted-foreground">{m.description}</div> : null}
-                <div className="mt-2 text-[11px] text-muted-foreground">{new Date(m.created_at).toLocaleString()}</div>
-              </a>
-            ))}
-          </div>
-        )}
-      </section>
+      </div>
     </main>
   );
 }

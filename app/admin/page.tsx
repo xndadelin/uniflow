@@ -5,6 +5,9 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 type CourseRow = {
   id: number;
@@ -22,6 +25,15 @@ type RequirementRow = {
 type AllocationRow = {
   course_id: number;
   resource_type: "tokens" | "vps_subscription";
+};
+
+type EscalatedRequestRow = {
+  id: number;
+  course_id: number;
+  student_id: string;
+  resource_type: "tokens" | "vps_subscription";
+  requested_amount: number;
+  created_at: string;
 };
 
 export default function AdminHomePage() {
@@ -46,20 +58,28 @@ export default function AdminHomePage() {
     queryKey: ["admin-dashboard"],
     enabled: adminCheckQuery.data?.isAdmin === true,
     queryFn: async () => {
-      const [coursesRes, reqRes, allocRes] = await Promise.all([
+      const [coursesRes, reqRes, allocRes, escalatedRes] = await Promise.all([
         supabase.from("courses").select("id,title,max_students,created_at").order("created_at", { ascending: false }),
         supabase.from("course_resource_requirements").select("course_id,resource_type,required_per_student"),
         supabase.from("course_resource_allocations").select("course_id,resource_type"),
+        supabase
+          .from("course_resource_requests")
+          .select("id,course_id,student_id,resource_type,requested_amount,created_at")
+          .eq("status", "escalated")
+          .order("created_at", { ascending: false })
+          .limit(50),
       ]);
 
       if (coursesRes.error) throw coursesRes.error;
       if (reqRes.error) throw reqRes.error;
       if (allocRes.error) throw allocRes.error;
+      if (escalatedRes.error) throw escalatedRes.error;
 
       return {
         courses: (coursesRes.data ?? []) as CourseRow[],
         requirements: (reqRes.data ?? []) as RequirementRow[],
         allocations: (allocRes.data ?? []) as AllocationRow[],
+        escalated: (escalatedRes.data ?? []) as EscalatedRequestRow[],
       };
     },
   });
@@ -103,6 +123,7 @@ export default function AdminHomePage() {
   const courses = dashboardQuery.data?.courses ?? [];
   const requirements = dashboardQuery.data?.requirements ?? [];
   const allocations = dashboardQuery.data?.allocations ?? [];
+  const escalated = (dashboardQuery.data as { escalated?: EscalatedRequestRow[] } | undefined)?.escalated ?? [];
 
   const allocKey = new Set(allocations.map((a) => `${a.course_id}:${a.resource_type}`));
   const reqByCourse = requirements.reduce<Record<number, RequirementRow[]>>((acc, r) => {
@@ -127,44 +148,51 @@ export default function AdminHomePage() {
         <p className="mt-1 text-sm text-muted-foreground">Alege rapid ce vrei sa faci. Prioritar: cursurile fara alocari.</p>
       </header>
 
-      <section className="grid gap-3 md:grid-cols-3">
-        <Link href="/admin/inventar" className="rounded-lg border border-border bg-card p-4 transition hover:bg-muted/10">
-          <div className="font-mono text-sm font-semibold text-foreground">Inventar global</div>
-          <div className="mt-1 text-xs text-muted-foreground">Setezi totalul resurselor (inclusiv recomandarea +10%).</div>
-        </Link>
-        <Link href="/admin/roles" className="rounded-lg border border-border bg-card p-4 transition hover:bg-muted/10">
-          <div className="font-mono text-sm font-semibold text-foreground">Roluri</div>
-          <div className="mt-1 text-xs text-muted-foreground">Atribuire/modificare roluri utilizatori.</div>
-        </Link>
-        <Link href="/admin/resurse" className="rounded-lg border border-border bg-card p-4 transition hover:bg-muted/10">
-          <div className="font-mono text-sm font-semibold text-foreground">Alocare & activitati</div>
-          <div className="mt-1 text-xs text-muted-foreground">Aprobi (aloci) resurse pe curs + gestionezi activitati per curs.</div>
-        </Link>
-      </section>
+      <div className="grid gap-8 md:grid-cols-2 md:items-start">
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-sm">Actiuni rapide</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/admin/inventar">
+                <span>Inventar global</span>
+                <span className="text-xs text-muted-foreground">total resurse</span>
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/admin/roles">
+                <span>Roluri</span>
+                <span className="text-xs text-muted-foreground">user roles</span>
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/admin/resurse">
+                <span>Alocare & activitati</span>
+                <span className="text-xs text-muted-foreground">per curs</span>
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
 
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <h2 className="font-mono text-sm font-semibold text-foreground">Cursuri fara alocare (necesita aprobare admin)</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Profesorul poate seta necesarul, dar studentii primesc resurse doar dupa ce adminul aloca.
+        <Card>
+          <CardHeader>
+            <CardTitle className="font-mono text-sm">Necesita alocare</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Cursuri cu necesar setat, dar fara alocare completa.
+              <span className="ml-2 font-mono text-foreground">{coursesNeedingAllocation.length}</span>
             </p>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Total: <span className="font-mono text-foreground">{coursesNeedingAllocation.length}</span>
-          </div>
-        </div>
+          </CardHeader>
+          <CardContent>
 
         {dashboardQuery.isLoading ? (
-          <div className="mt-4 text-sm text-muted-foreground">Se incarca...</div>
+          <div className="text-sm text-muted-foreground">Se incarca...</div>
         ) : dashboardQuery.isError ? (
-          <div className="mt-4 text-sm text-destructive">Eroare la incarcare.</div>
+          <div className="text-sm text-destructive">Eroare la incarcare.</div>
         ) : coursesNeedingAllocation.length === 0 ? (
-          <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-            Nu exista cursuri cu necesar setat si fara alocare.
-          </div>
+          <div className="text-sm text-muted-foreground">Nu exista cursuri cu necesar setat si fara alocare.</div>
         ) : (
-          <div className="mt-4">
+          <div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -177,21 +205,22 @@ export default function AdminHomePage() {
                 {coursesNeedingAllocation.map(({ course, missing }) => (
                   <TableRow key={course.id}>
                     <TableCell>
-                      <div className="space-y-0.5">
-                        <div className="text-sm font-medium text-foreground">#{course.id} · {course.title}</div>
-                        <div className="text-[11px] text-muted-foreground">max studenti: {course.max_students}</div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-medium">#{course.id} · {course.title}</div>
+                        <div className="text-[11px] text-muted-foreground">max: {course.max_students}</div>
                       </div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {missing.map((m) => m.resource_type).join(", ")}
+                    <TableCell className="space-x-2">
+                      {missing.map((m) => (
+                        <Badge key={`${course.id}-${m.resource_type}`} variant="secondary">
+                          {m.resource_type}
+                        </Badge>
+                      ))}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Link
-                        href={`/admin/resurse?courseId=${course.id}`}
-                        className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground"
-                      >
-                        Deschide alocare
-                      </Link>
+                      <Button asChild size="sm">
+                        <Link href={`/admin/resurse?courseId=${course.id}`}>Deschide</Link>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -199,27 +228,69 @@ export default function AdminHomePage() {
             </Table>
           </div>
         )}
-      </section>
+          </CardContent>
+        </Card>
+      </div>
 
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <h2 className="font-mono text-sm font-semibold text-foreground">Toate cursurile</h2>
-            <p className="mt-1 text-xs text-muted-foreground">Intri direct pe un curs ca sa modifici alocari si activitati.</p>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Total: <span className="font-mono text-foreground">{courses.length}</span>
-          </div>
-        </div>
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle className="font-mono text-sm">Escalari la admin</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Cereri escaladate de profesori (cand bonusul 10% nu ajunge). Total:{" "}
+            <span className="font-mono text-foreground">{escalated.length}</span>
+          </p>
+        </CardHeader>
+        <CardContent>
+          {dashboardQuery.isLoading ? (
+            <div className="text-sm text-muted-foreground">Se incarca...</div>
+          ) : dashboardQuery.isError ? (
+            <div className="text-sm text-destructive">Eroare la incarcare.</div>
+          ) : escalated.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Nu exista cereri escaladate.</div>
+          ) : (
+            <div className="overflow-hidden rounded-md bg-muted/10 divide-y divide-border/20">
+              {escalated.map((r) => {
+                const c = courses.find((x) => x.id === r.course_id);
+                return (
+                  <div key={r.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium">
+                        #{r.id} · {c ? `Curs #${c.id} · ${c.title}` : `Curs #${r.course_id}`}
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <Badge variant="outline">{r.resource_type}</Badge>
+                        <Badge variant="outline">cantitate: {r.requested_amount}</Badge>
+                      </div>
+                    </div>
+                    <Button asChild size="sm" variant="outline">
+                      <Link href={`/admin/resurse?courseId=${r.course_id}`}>Deschide</Link>
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle className="font-mono text-sm">Toate cursurile</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Intri direct pe un curs ca sa modifici alocari si activitati. Total:{" "}
+            <span className="font-mono text-foreground">{courses.length}</span>
+          </p>
+        </CardHeader>
+        <CardContent>
 
         {dashboardQuery.isLoading ? (
-          <div className="mt-4 text-sm text-muted-foreground">Se incarca...</div>
+          <div className="text-sm text-muted-foreground">Se incarca...</div>
         ) : dashboardQuery.isError ? (
-          <div className="mt-4 text-sm text-destructive">Eroare la incarcare.</div>
+          <div className="text-sm text-destructive">Eroare la incarcare.</div>
         ) : courses.length === 0 ? (
-          <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista cursuri.</div>
+          <div className="text-sm text-muted-foreground">Nu exista cursuri.</div>
         ) : (
-          <div className="mt-4">
+          <div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -236,12 +307,9 @@ export default function AdminHomePage() {
                     <TableCell className="text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground">{new Date(c.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      <Link
-                        href={`/admin/resurse?courseId=${c.id}`}
-                        className="inline-flex items-center justify-center bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-                      >
-                        Gestioneaza
-                      </Link>
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/admin/resurse?courseId=${c.id}`}>Gestioneaza</Link>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -249,7 +317,8 @@ export default function AdminHomePage() {
             </Table>
           </div>
         )}
-      </section>
+        </CardContent>
+      </Card>
     </main>
   );
 }

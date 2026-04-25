@@ -1,0 +1,102 @@
+"use client";
+
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+export type AppTopNavProps = {
+  displayName: string | null;
+  isAuthenticated: boolean;
+  isAdmin: boolean;
+  isProfesor: boolean;
+  onSignOut?: () => void;
+};
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const i = (parts[0]?.[0] ?? "U") + (parts[1]?.[0] ?? "");
+  return i.toUpperCase().slice(0, 2);
+}
+
+export function AppTopNav({ displayName, isAuthenticated, isAdmin, isProfesor, onSignOut }: AppTopNavProps) {
+  async function signOut() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    window.location.href = "/";
+  }
+
+  return (
+    <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
+      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-4 py-3 md:px-6">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="flex items-baseline gap-2 text-foreground">
+            <span className="text-sm font-semibold tracking-tight">UniFlow</span>
+          </Link>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          {isAuthenticated ? (
+            <>
+              {isAdmin ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/admin">Admin</Link>
+                </Button>
+              ) : null}
+              {isProfesor ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/profesor/cursuri">Profesor</Link>
+                </Button>
+              ) : null}
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant={"ghost"} size="sm" className="gap-2">
+                    <Avatar className="h-7 w-7">
+                      <AvatarFallback className="text-[10px]">{initials(displayName ?? "User")}</AvatarFallback>
+                    </Avatar>
+                    <span className="max-w-[140px] truncate">{displayName ?? "Utilizator"}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Cont</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/">Acasa</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/login">Schimba cont</Link>
+                  </DropdownMenuItem>
+                  {(onSignOut ?? signOut) ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={onSignOut ?? signOut}>Delogare</DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          ) : (
+            <>
+              <Button asChild size="sm">
+                <Link href="/login">Logare</Link>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <Link href="/register">Inregistrare</Link>
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+

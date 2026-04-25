@@ -1,11 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Pagination } from "@/components/Pagination";
 
 type CourseRow = {
   id: number;
@@ -33,6 +37,9 @@ function getErrorMessage(err: unknown) {
 
 export function StudentHome() {
   const supabase = useMemo(() => createClient(), []);
+  const [enrolledPage, setEnrolledPage] = useState<number>(1);
+  const [availablePage, setAvailablePage] = useState<number>(1);
+  const pageSize = 10;
 
   const coursesQuery = useQuery({
     queryKey: ["student-courses-all"],
@@ -74,25 +81,42 @@ export function StudentHome() {
   const enrolledSet = new Set((enrollmentsQuery.data ?? []).map((e) => e.course_id));
   const enrolledCourses = courses.filter((c) => enrolledSet.has(c.id));
   const availableCourses = courses.filter((c) => c.enrollment_open && !enrolledSet.has(c.id));
+  const enrolledTotal = enrolledCourses.length;
+  const availableTotal = availableCourses.length;
+  const enrolledPaged = enrolledCourses.slice((enrolledPage - 1) * pageSize, enrolledPage * pageSize);
+  const availablePaged = availableCourses.slice((availablePage - 1) * pageSize, availablePage * pageSize);
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
-      <header className="mb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.24em] text-primary">Student</p>
-        <h1 className="mt-2 font-mono text-2xl font-semibold tracking-wider text-foreground">Cursuri</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Vezi cursurile disponibile si inroleaza-te la cele care permit inscriere.</p>
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-10 md:px-6 md:py-12">
+      <header className="mb-8">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">Student</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Cursuri</h1>
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          Vezi cursurile disponibile și înrolează-te la cele care permit înscriere.
+        </p>
       </header>
 
-      <section className="rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Cursurile mele</h2>
+      <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold tracking-tight">Cursurile mele</CardTitle>
+          </CardHeader>
+          <CardContent>
         {enrollmentsQuery.isLoading || coursesQuery.isLoading ? (
-          <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
-        ) : enrolledCourses.length === 0 ? (
-          <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-            Nu esti inrolat la niciun curs inca.
-          </div>
+          <div className="text-sm text-muted-foreground">Se incarca...</div>
+        ) : enrolledTotal === 0 ? (
+          <div className="text-sm text-muted-foreground">Nu esti inrolat la niciun curs inca.</div>
         ) : (
-          <div className="mt-4">
+          <div>
+            <div className="mb-4">
+              <Pagination
+                variant="compact"
+                page={enrolledPage}
+                pageSize={pageSize}
+                totalItems={enrolledTotal}
+                onPageChange={setEnrolledPage}
+              />
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -101,39 +125,50 @@ export function StudentHome() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {enrolledCourses.map((c) => (
+                {enrolledPaged.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="min-w-[260px]">
-                      <div className="space-y-0.5">
-                          <Link href={`/cursuri/${c.id}`} className="text-sm font-medium text-foreground underline-offset-4 hover:underline">
-                            {c.title}
-                          </Link>
+                      <div className="space-y-1">
+                        <Link href={`/cursuri/${c.id}`} className="text-sm font-medium underline-offset-4 hover:underline">
+                          {c.title}
+                        </Link>
                         {c.description ? <div className="text-xs text-muted-foreground">{c.description}</div> : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{c.max_students}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
         )}
-      </section>
+          </CardContent>
+        </Card>
 
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <div className="flex flex-col gap-1">
-          <h2 className="font-mono text-sm font-semibold text-foreground">Cursuri disponibile</h2>
-          <p className="text-xs text-muted-foreground">Cursuri cu inscriere deschisa, la care nu esti inrolat inca.</p>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold tracking-tight">Cursuri disponibile</CardTitle>
+            <p className="text-xs text-muted-foreground">Cursuri cu inscriere deschisa, la care nu esti inrolat inca.</p>
+          </CardHeader>
+          <CardContent>
 
         {coursesQuery.isLoading ? (
-          <div className="mt-4 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Se incarca...</div>
+          <div className="text-sm text-muted-foreground">Se incarca...</div>
         ) : coursesQuery.isError ? (
-          <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          <div className="rounded-md bg-destructive/5 p-4 text-sm text-destructive">
             Eroare la incarcarea cursurilor: <span className="font-mono text-xs">{getErrorMessage(coursesQuery.error)}</span>
           </div>
         ) : (
-          <div className="mt-4">
+          <div>
+            <div className="mb-4">
+              <Pagination
+                variant="compact"
+                page={availablePage}
+                pageSize={pageSize}
+                totalItems={availableTotal}
+                onPageChange={setAvailablePage}
+              />
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -144,38 +179,33 @@ export function StudentHome() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {availableCourses.length === 0 ? (
+                {availableTotal === 0 ? (
                   <TableRow>
                     <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
                       Nu exista cursuri disponibile pentru inscriere.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  availableCourses.map((c) => {
+                  availablePaged.map((c) => {
                     const canEnroll = true;
                     return (
                       <TableRow key={c.id}>
                         <TableCell className="min-w-[260px]">
-                          <div className="space-y-0.5">
-                            <Link href={`/cursuri/${c.id}`} className="text-sm font-medium text-foreground underline-offset-4 hover:underline">
+                          <div className="space-y-1">
+                            <Link href={`/cursuri/${c.id}`} className="text-sm font-medium underline-offset-4 hover:underline">
                               {c.title}
                             </Link>
                             {c.description ? <div className="text-xs text-muted-foreground">{c.description}</div> : null}
                           </div>
                         </TableCell>
-                        <TableCell className="text-center text-xs text-muted-foreground">
-                          Deschisa
+                        <TableCell className="text-center">
+                          <Badge variant="outline">deschisa</Badge>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs text-muted-foreground">{c.max_students}</TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{c.max_students}</TableCell>
                         <TableCell className="text-right">
-                          <button
-                            type="button"
-                            disabled={!canEnroll || enrollMutation.isPending}
-                            onClick={() => enrollMutation.mutate(c.id)}
-                            className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-                          >
+                          <Button size="sm" onClick={() => enrollMutation.mutate(c.id)} disabled={!canEnroll || enrollMutation.isPending}>
                             Inroleaza-ma
-                          </button>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -185,7 +215,9 @@ export function StudentHome() {
             </Table>
           </div>
         )}
-      </section>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }

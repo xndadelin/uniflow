@@ -28,7 +28,8 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
     <thead
       data-slot="table-header"
       className={cn(
-        "[&_tr]:border-b",
+        // Flat look: avoid heavy borders; rely on spacing.
+        "[&_tr]:border-b [&_tr]:border-border/40",
         className
       )}
       {...props}
@@ -67,7 +68,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b transition-colors has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b border-border/30 transition-colors hover:bg-muted/20 data-[state=selected]:bg-muted/30",
         className
       )}
       {...props}

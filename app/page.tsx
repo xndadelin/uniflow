@@ -2,6 +2,9 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { StudentHome } from "@/components/student/StudentHome";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { redirect } from "next/navigation";
 
 export default async function Home() {
   const cookieStore = await cookies();
@@ -26,73 +29,69 @@ export default async function Home() {
   const isAuthenticated = Boolean(user);
   const isStudent = isAuthenticated && !isAdmin && !isProfesor;
 
+  if (isAuthenticated && isAdmin) {
+    redirect("/admin");
+  }
+
+  if (isAuthenticated && isProfesor) {
+    redirect("/profesor/cursuri");
+  }
+
   if (isStudent) {
     return <StudentHome />;
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center px-4 py-12">
-      <section className="w-full max-w-3xl bg-card p-8 md:p-10">
-        <p className="mb-3 font-mono text-xs uppercase tracking-[0.24em] text-primary">UniFlow</p>
-        <h1 className="mb-3 font-mono text-3xl font-semibold tracking-wider text-foreground md:text-4xl">
-          {isAuthenticated ? `Salut, ${displayName ?? "utilizator"}` : "Portal autentificare"}
-        </h1>
-        <p className="mb-8 max-w-2xl text-sm text-muted-foreground md:text-base">
-          {isAuthenticated
-            ? "Esti conectat. Bine ai revenit in UniFlow."
-            : "Intra in platforma cu email + parola sau prin GitHub OAuth."}
-        </p>
+    <main className="flex flex-1 items-center justify-center px-4 py-14 md:py-16">
+      <div className="w-full max-w-5xl">
+        <Card className="border-border/70 shadow-sm">
+          <CardHeader className="pb-2 md:pb-3">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-primary">UniFlow</p>
+            <CardTitle className="text-3xl font-semibold tracking-tight md:text-4xl">
+              {isAuthenticated ? `Salut, ${displayName ?? "utilizator"}` : "Portal academic"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-8 max-w-2xl text-sm text-muted-foreground md:text-base">
+              {isAuthenticated
+                ? "Ești conectat. Accesează secțiunea corespunzătoare rolului tău."
+                : "Autentifică-te cu email + parolă sau prin GitHub OAuth."}
+            </p>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          {isAuthenticated ? (
-            <>
-              <Link
-                href="/"
-                className="inline-flex items-center justify-center bg-primary px-4 py-2 text-sm font-semibold uppercase tracking-wide text-primary-foreground transition hover:opacity-90"
-              >
-                Acasa
-              </Link>
-              {isAdmin ? (
-                <Link
-                  href="/admin/roles"
-                  className="inline-flex items-center justify-center bg-muted/30 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-                >
-                  Admin roluri
-                </Link>
-              ) : isProfesor ? (
-                <Link
-                  href="/profesor/cursuri"
-                  className="inline-flex items-center justify-center bg-muted/30 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-                >
-                  Profesor cursuri
-                </Link>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {isAuthenticated ? (
+                <>
+                  <Button asChild>
+                    <Link href="/">Acasa</Link>
+                  </Button>
+                  {isAdmin ? (
+                    <Button asChild variant="secondary">
+                      <Link href="/admin">Admin dashboard</Link>
+                    </Button>
+                  ) : isProfesor ? (
+                    <Button asChild variant="secondary">
+                      <Link href="/profesor/cursuri">Cursuri profesor</Link>
+                    </Button>
+                  ) : (
+                    <Button asChild variant="secondary">
+                      <Link href="/login">Schimba cont</Link>
+                    </Button>
+                  )}
+                </>
               ) : (
-                <Link
-                  href="/login"
-                  className="inline-flex items-center justify-center bg-muted/30 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-                >
-                  Schimba cont
-                </Link>
+                <>
+                  <Button asChild>
+                    <Link href="/login">Logare</Link>
+                  </Button>
+                  <Button asChild variant="secondary">
+                    <Link href="/register">Inregistrare</Link>
+                  </Button>
+                </>
               )}
-            </>
-          ) : (
-            <>
-              <Link
-                href="/login"
-                className="inline-flex items-center justify-center bg-primary px-4 py-2 text-sm font-semibold uppercase tracking-wide text-primary-foreground transition hover:opacity-90"
-              >
-                Logare
-              </Link>
-              <Link
-                href="/register"
-                className="inline-flex items-center justify-center bg-muted/30 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-              >
-                Inregistrare
-              </Link>
-            </>
-          )}
-        </div>
-      </section>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }

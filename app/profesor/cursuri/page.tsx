@@ -29,25 +29,6 @@ type RequirementDraft = {
   required_per_student: string;
 };
 
-type CourseMaterialRow = {
-  id: number;
-  course_id: number;
-  title: string;
-  description: string | null;
-  url: string;
-  created_at: string;
-};
-
-type ResourceRequestRow = {
-  id: number;
-  course_id: number;
-  student_id: string;
-  resource_type: "tokens" | "vps_subscription";
-  requested_amount: number;
-  status: "pending" | "approved" | "rejected" | "escalated";
-  created_at: string;
-};
-
 function formatResourceLabel(t: RequirementDraft["resource_type"]) {
   return t === "tokens" ? "Token-uri AI" : "Abonamente VPS";
 }
@@ -70,20 +51,6 @@ function getErrorMessage(err: unknown) {
     return (err as { message: string }).message;
   }
   return "Eroare la request.";
-}
-
-function mergeFiles(prev: File[], next: File[]) {
-  const key = (f: File) => `${f.name}__${f.size}__${f.lastModified}`;
-  const seen = new Set(prev.map(key));
-  const merged = [...prev];
-  for (const f of next) {
-    const k = key(f);
-    if (!seen.has(k)) {
-      seen.add(k);
-      merged.push(f);
-    }
-  }
-  return merged;
 }
 
 export default function ProfesorCursuriPage() {
@@ -138,147 +105,8 @@ export default function ProfesorCursuriPage() {
         return acc;
       }, {});
 
-      const { data: materials, error: matErr } = courseIds.length
-        ? await supabase
-            .from("course_materials")
-            .select("id,course_id,title,description,url,created_at")
-            .in("course_id", courseIds)
-            .order("created_at", { ascending: false })
-        : { data: [] as CourseMaterialRow[], error: null };
-      if (matErr) throw matErr;
-
-      const { data: requests, error: reqErr2 } = courseIds.length
-        ? await supabase
-            .from("course_resource_requests")
-            .select("id,course_id,student_id,resource_type,requested_amount,status,created_at")
-            .in("course_id", courseIds)
-            .order("created_at", { ascending: false })
-        : { data: [] as ResourceRequestRow[], error: null };
-      if (reqErr2) throw reqErr2;
-
-      const requestsByCourse = (requests ?? []).reduce<Record<number, ResourceRequestRow[]>>((acc, r) => {
-        acc[r.course_id] = [...(acc[r.course_id] ?? []), r];
-        return acc;
-      }, {});
-
-      const materialsByCourse = (materials ?? []).reduce<Record<number, CourseMaterialRow[]>>((acc, m) => {
-        acc[m.course_id] = [...(acc[m.course_id] ?? []), m];
-        return acc;
-      }, {});
-
-      return { courses: (courses ?? []) as Course[], requirementsByCourse: byCourse, materialsByCourse, requestsByCourse };
+      return { courses: (courses ?? []) as Course[], requirementsByCourse: byCourse };
     },
-  });
-
-  const [materialDraftByCourse, setMaterialDraftByCourse] = useState<Record<number, { title: string; url: string; description: string }>>({});
-  const [materialFilesByCourse, setMaterialFilesByCourse] = useState<Record<number, File[]>>({});
-
-  const addMaterialMutation = useMutation({
-    mutationFn: async ({
-      courseId,
-      title,
-      url,
-      description,
-      files,
-    }: {
-      courseId: number;
-      title: string;
-      url: string;
-      description: string;
-      files: File[];
-    }) => {
-      const trimmedTitle = title.trim();
-      const trimmedUrl = url.trim();
-      const desc = description.trim() ? description.trim() : null;
-      const hasFiles = (files ?? []).length > 0;
-
-      if (!hasFiles && !trimmedUrl) throw new Error("Trebuie sa incarci cel putin un fisier sau sa pui un URL.");
-
-      const rowsToInsert: Array<{ course_id: number; teacher_id: string | null; title: string; description: string | null; url: string }> = [];
-
-      if (hasFiles) {
-        for (const file of files) {
-          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-          const path = `course-${courseId}/${Date.now()}-${safeName}`;
-          const uploadRes = await supabase.storage.from("course-materials").upload(path, file, { upsert: false, contentType: file.type });
-          if (uploadRes.error) {
-            const raw = JSON.stringify(uploadRes.error);
-            const msg = String(uploadRes.error.message ?? "Upload esuat.");
-            const hint =
-              msg.toLowerCase().includes("row-level security") || msg.toLowerCase().includes("permission")
-                ? ' Lipsesc policy-urile de INSERT pe `storage.objects` pentru bucket-ul "course-materials".'
-                : msg.toLowerCase().includes("bucket")
-                  ? ' Verifica daca bucket-ul "course-materials" exista in Supabase Storage.'
-                  : "";
-            throw new Error(`Upload esuat: ${msg}.${hint} Detalii: ${raw}`);
-          }
-          const publicUrl = supabase.storage.from("course-materials").getPublicUrl(path).data.publicUrl;
-          rowsToInsert.push({
-            course_id: courseId,
-            teacher_id: profesorCheckQuery.data?.userId ?? null,
-            title: trimmedTitle || file.name,
-            description: desc,
-            url: publicUrl,
-          });
-        }
-      }
-
-      if (trimmedUrl) {
-        rowsToInsert.push({
-          course_id: courseId,
-          teacher_id: profesorCheckQuery.data?.userId ?? null,
-          title: trimmedTitle || "Link",
-          description: desc,
-          url: trimmedUrl,
-        });
-      }
-
-      const { error } = await supabase.from("course_materials").insert(rowsToInsert);
-      if (error) throw error;
-    },
-    onSuccess: async (_data, vars) => {
-      toast.success("Material(e) adaugat(e).");
-      setMaterialDraftByCourse((prev) => ({ ...prev, [vars.courseId]: { title: "", url: "", description: "" } }));
-      setMaterialFilesByCourse((prev) => ({ ...prev, [vars.courseId]: [] }));
-      await coursesQuery.refetch();
-    },
-    onError: (e: unknown) => toast.error(getErrorMessage(e)),
-  });
-
-  const approveRequestMutation = useMutation({
-    mutationFn: async (requestId: number) => {
-      const { error } = await supabase.rpc("approve_course_resource_request", { _request_id: requestId });
-      if (error) throw error;
-    },
-    onSuccess: async () => {
-      toast.success("Cerere aprobata (din bonus profesor).");
-      await coursesQuery.refetch();
-    },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
-  });
-
-  const rejectRequestMutation = useMutation({
-    mutationFn: async (requestId: number) => {
-      const { error } = await supabase.rpc("reject_course_resource_request", { _request_id: requestId });
-      if (error) throw error;
-    },
-    onSuccess: async () => {
-      toast.success("Cerere respinsa.");
-      await coursesQuery.refetch();
-    },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
-  });
-
-  const escalateRequestMutation = useMutation({
-    mutationFn: async (requestId: number) => {
-      const { error } = await supabase.rpc("escalate_course_resource_request", { _request_id: requestId });
-      if (error) throw error;
-    },
-    onSuccess: async () => {
-      toast.success("Cerere trimisa la admin (escaladare).");
-      await coursesQuery.refetch();
-    },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Eroare."),
   });
 
   const createCourseMutation = useMutation({
@@ -373,8 +201,6 @@ export default function ProfesorCursuriPage() {
 
   const courses = coursesQuery.data?.courses ?? [];
   const requirementsByCourse = coursesQuery.data?.requirementsByCourse ?? {};
-  const materialsByCourse = (coursesQuery.data as { materialsByCourse?: Record<number, CourseMaterialRow[]> } | undefined)?.materialsByCourse ?? {};
-  const requestsByCourse = (coursesQuery.data as { requestsByCourse?: Record<number, ResourceRequestRow[]> } | undefined)?.requestsByCourse ?? {};
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-8">
@@ -529,12 +355,13 @@ export default function ProfesorCursuriPage() {
                   <TableHead className="text-right">Max studenti</TableHead>
                   <TableHead>Resurse necesare</TableHead>
                   <TableHead className="text-right">Creat la</TableHead>
+                  <TableHead className="text-right">Actiuni</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {courses.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
                       Inca nu ai cursuri. Creeaza primul curs mai sus.
                     </TableCell>
                   </TableRow>
@@ -583,6 +410,14 @@ export default function ProfesorCursuriPage() {
                         <TableCell className="text-right text-xs text-muted-foreground">
                           {new Date(c.created_at).toLocaleString()}
                         </TableCell>
+                        <TableCell className="text-right">
+                          <Link
+                            href={`/profesor/cursuri/${c.id}`}
+                            className="inline-flex items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground"
+                          >
+                            Gestioneaza
+                          </Link>
+                        </TableCell>
                       </TableRow>
                     );
                   })
@@ -593,191 +428,6 @@ export default function ProfesorCursuriPage() {
         )}
       </section>
 
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Materiale (pe curs)</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Poti face drag & drop sau selecta mai multe fisiere (PDF/DOCX) + optional un URL.</p>
-
-        {courses.map((c) => {
-          const mats = materialsByCourse[c.id] ?? [];
-          const draft = materialDraftByCourse[c.id] ?? { title: "", url: "", description: "" };
-          const files = materialFilesByCourse[c.id] ?? [];
-
-          return (
-            <div key={`materials-${c.id}`} className="mt-4 rounded-md border border-border/70 bg-muted/10 p-4">
-              <div className="font-mono text-xs text-muted-foreground">Curs #{c.id}</div>
-              <div className="text-sm font-medium text-foreground">{c.title}</div>
-
-              <div className="mt-3 grid gap-2 md:grid-cols-3">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Titlu (optional)</label>
-                  <input
-                    value={draft.title}
-                    onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, title: e.target.value } }))}
-                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                    placeholder="Daca incarci mai multe, se aplica la toate"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="text-xs font-medium text-muted-foreground">Dropzone (PDF/DOCX)</label>
-                  <div
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const list = Array.from(e.dataTransfer.files ?? []).filter((f) => f && f.size > 0);
-                      setMaterialFilesByCourse((prev) => ({ ...prev, [c.id]: mergeFiles(prev[c.id] ?? [], list) }));
-                    }}
-                    className="mt-1 rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground"
-                  >
-                    Trage aici fisierele sau foloseste butonul de selectare.
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        onChange={(e) => {
-                          const list = Array.from(e.target.files ?? []);
-                          setMaterialFilesByCourse((prev) => ({ ...prev, [c.id]: mergeFiles(prev[c.id] ?? [], list) }));
-                          e.currentTarget.value = "";
-                        }}
-                        className="w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                      />
-                      {files.length ? (
-                        <button
-                          type="button"
-                          onClick={() => setMaterialFilesByCourse((prev) => ({ ...prev, [c.id]: [] }))}
-                          className="bg-muted/30 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50"
-                        >
-                          Goleste
-                        </button>
-                      ) : null}
-                    </div>
-                    {files.length ? (
-                      <div className="mt-2 text-[11px] text-muted-foreground">
-                        Selectate: <span className="font-mono text-foreground">{files.length}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="text-xs font-medium text-muted-foreground">URL (optional)</label>
-                  <input
-                    value={draft.url}
-                    onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, url: e.target.value } }))}
-                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                    placeholder="https://..."
-                  />
-                </div>
-                <div className="md:col-span-3">
-                  <label className="text-xs font-medium text-muted-foreground">Descriere (optional)</label>
-                  <input
-                    value={draft.description}
-                    onChange={(e) => setMaterialDraftByCourse((prev) => ({ ...prev, [c.id]: { ...draft, description: e.target.value } }))}
-                    className="mt-1 w-full border border-input/60 bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="button"
-                  disabled={addMaterialMutation.isPending}
-                  onClick={() =>
-                    addMaterialMutation.mutate({
-                      courseId: c.id,
-                      title: draft.title,
-                      url: draft.url,
-                      description: draft.description,
-                      files,
-                    })
-                  }
-                  className="inline-flex items-center justify-center bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-                >
-                  Upload / Adauga
-                </button>
-              </div>
-
-              <div className="mt-3 text-xs text-muted-foreground">Materiale curente: {mats.length}</div>
-              {mats.length ? (
-                <div className="mt-2 space-y-1">
-                  {mats.slice(0, 8).map((m) => (
-                    <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="block text-xs text-foreground underline">
-                      {m.title}
-                    </a>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-2 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista materiale.</div>
-              )}
-            </div>
-          );
-        })}
-      </section>
-
-      <section className="mt-6 rounded-lg border border-border bg-card p-4 md:p-6">
-        <h2 className="font-mono text-sm font-semibold text-foreground">Cereri resurse suplimentare (aprobare)</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Aprobi din bonus 10%. Daca bonusul nu ajunge, folosesti „Trimite la admin”.
-        </p>
-
-        {courses.map((c) => {
-          const reqRequests = (requestsByCourse[c.id] ?? []).filter((r) => r.status === "pending" || r.status === "escalated");
-          return (
-            <div key={`requests-${c.id}`} className="mt-4 rounded-md border border-border/70 bg-muted/10 p-4">
-              <div className="font-mono text-xs text-muted-foreground">Curs #{c.id}</div>
-              <div className="text-sm font-medium text-foreground">{c.title}</div>
-
-              <div className="mt-3 text-xs text-muted-foreground">Cereri (pending/escalated): {reqRequests.length}</div>
-              {reqRequests.length ? (
-                <div className="mt-2 space-y-2">
-                  {reqRequests.slice(0, 10).map((r) => (
-                    <div key={r.id} className="rounded-md border border-border/70 bg-card p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="font-mono text-xs text-muted-foreground">#{r.id}</div>
-                        <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                        <span className="rounded-md bg-muted/30 px-2 py-1">{r.resource_type}</span>
-                        <span className="rounded-md bg-muted/30 px-2 py-1">cantitate: {r.requested_amount}</span>
-                        <span className="rounded-md bg-muted/30 px-2 py-1">status: {r.status}</span>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={approveRequestMutation.isPending}
-                          onClick={() => approveRequestMutation.mutate(r.id)}
-                          className="bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground disabled:opacity-50"
-                        >
-                          Aproba (bonus)
-                        </button>
-                        <button
-                          type="button"
-                          disabled={escalateRequestMutation.isPending}
-                          onClick={() => escalateRequestMutation.mutate(r.id)}
-                          className="bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
-                        >
-                          Trimite la admin
-                        </button>
-                        <button
-                          type="button"
-                          disabled={rejectRequestMutation.isPending}
-                          onClick={() => rejectRequestMutation.mutate(r.id)}
-                          className="bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-foreground transition hover:bg-muted/50 disabled:opacity-50"
-                        >
-                          Respinge
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-2 rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Nu exista cereri.</div>
-              )}
-            </div>
-          );
-        })}
-      </section>
     </main>
   );
 }
